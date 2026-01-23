@@ -1,0 +1,67 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h1>{{.Task.Title}}</h1>
+
+{{if .LinkedBranch}}
+<div style="display: flex; gap: 1rem; align-items: center;">
+    <a href="/branches/{{.LinkedBranch.Repo}}/{{.LinkedBranch.Name}}" role="button">Go to Branch: {{.LinkedBranch.Name}}</a>
+    {{if $.IsOwner}}
+    <form method="POST" action="/branches/{{.LinkedBranch.Repo}}/{{.LinkedBranch.Name}}/abandon" style="margin: 0;">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <button type="submit" class="secondary outline" style="padding: 0.5rem 1rem;">Delete Branch</button>
+    </form>
+    {{end}}
+</div>
+{{else if and .IsOwner (eq .Task.Status "open")}}
+<button onclick="document.getElementById('start-task').showModal()">Start with Agent</button>
+<dialog id="start-task">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('start-task').close()"></button>
+            <h3>Start: {{.Task.Title}}</h3>
+        </header>
+        <form method="POST" action="/tasks/{{.Task.Repo}}/{{.Task.Slug}}/start">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <fieldset>
+                <legend>Choose Agent</legend>
+                <label><input type="radio" name="agent" value="claude" checked> Claude</label>
+                <label><input type="radio" name="agent" value="codex"> Codex</label>
+            </fieldset>
+            <button type="submit">Start with Agent</button>
+        </form>
+    </article>
+</dialog>
+{{end}}
+
+<dl>
+    <dt>Slug</dt>
+    <dd><code>{{.Task.Slug}}</code></dd>
+    
+    <dt>Repository</dt>
+    <dd><a href="/repos/{{.Task.Repo}}">{{.Task.Repo}}</a></dd>
+    
+    <dt>Priority</dt>
+    <dd>P{{.Task.Priority}}</dd>
+    
+    <dt>Status</dt>
+    <dd class="{{.Task.Status}}">{{.Task.Status}}</dd>
+    
+    {{if .Task.Body}}
+    <dt>Description</dt>
+    <dd>{{.Task.Body}}</dd>
+    {{end}}
+    
+    <dt>Created</dt>
+    <dd>{{.Task.CreatedAt.Format "2006-01-02 15:04:05"}}</dd>
+</dl>
+
+{{if .Task.DependsOn}}
+<h2>Dependencies</h2>
+<ul>
+    {{range .Task.DependsOn}}
+    <li>{{.}}</li>
+    {{end}}
+</ul>
+{{end}}
+{{end}}

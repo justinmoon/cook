@@ -1,0 +1,140 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>Dashboard</h1>
+
+<section>
+    <h2>Your Identity</h2>
+    <dl>
+        <dt>Display Name</dt>
+        <dd>{{.User.DisplayName}}</dd>
+        <dt>Npub</dt>
+        <dd><code style="font-size: 0.75rem; word-break: break-all;">{{.User.Npub}}</code></dd>
+    </dl>
+</section>
+
+<section>
+    <h2>SSH Keys</h2>
+    {{if not .User.HasSSHKeys}}
+    <article style="background: var(--pico-mark-background-color); padding: 1rem; border-radius: var(--pico-border-radius);">
+        <p><strong>Add an SSH key to get started.</strong></p>
+        <p>You need at least one SSH key to create repositories and push code.</p>
+    </article>
+    {{end}}
+
+    {{if .SSHKeys}}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Fingerprint</th>
+                <th>Added</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .SSHKeys}}
+            <tr>
+                <td>{{if .Name}}{{.Name}}{{else}}<em>unnamed</em>{{end}}</td>
+                <td><code style="font-size: 0.75rem;">{{.Fingerprint}}</code></td>
+                <td>{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+                <td>
+                    <form method="POST" action="/dashboard/ssh-keys/delete" style="margin: 0;">
+                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                        <input type="hidden" name="fingerprint" value="{{.Fingerprint}}">
+                        <button type="submit" class="outline secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{end}}
+
+    <details {{if not .User.HasSSHKeys}}open{{end}}>
+        <summary>Add SSH Key</summary>
+        <form id="ssh-key-form" method="POST" action="/dashboard/ssh-keys">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <label>
+                Public Key
+                <textarea
+                    name="key"
+                    placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... or ssh-rsa AAAAB3NzaC1yc2E..."
+                    rows="3"
+                    required></textarea>
+                <small>Paste your SSH public key (usually from ~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub)</small>
+            </label>
+            <label>
+                Name (optional)
+                <input type="text" name="name" placeholder="e.g., MacBook Pro">
+            </label>
+            {{if .SSHKeyError}}<p style="color: var(--pico-del-color);">{{.SSHKeyError}}</p>{{end}}
+            <button type="submit">Add SSH Key</button>
+        </form>
+    </details>
+</section>
+
+<section>
+    <h2>Quick Stats</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+        <article style="text-align: center; margin: 0;">
+            <p style="font-size: 2rem; margin: 0;">{{.RepoCount}}</p>
+            <p style="margin: 0;">Repositories</p>
+        </article>
+        <article style="text-align: center; margin: 0;">
+            <p style="font-size: 2rem; margin: 0;">{{.TaskCount}}</p>
+            <p style="margin: 0;">Tasks</p>
+        </article>
+    </div>
+</section>
+
+{{if .User.HasSSHKeys}}
+<section>
+    <h2>Create Repository</h2>
+    <form id="repo-form" method="POST" action="/dashboard/repos">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <label>
+                Repository Name
+                <input type="text" name="name" placeholder="my-project" required pattern="[a-zA-Z0-9_-]+">
+                <small>Letters, numbers, hyphens, and underscores only</small>
+            </label>
+            <label>
+                Clone URL (optional)
+                <input type="url" name="url" placeholder="https://github.com/user/repo.git">
+                <small>Import from existing repository</small>
+            </label>
+        </div>
+        {{if .RepoError}}<p style="color: var(--pico-del-color);">{{.RepoError}}</p>{{end}}
+        <button type="submit">Create Repository</button>
+    </form>
+</section>
+{{else}}
+<section>
+    <h2>Create Repository</h2>
+    <p style="color: var(--pico-muted-color);">Add an SSH key above to enable repository creation.</p>
+</section>
+{{end}}
+
+{{if .Repos}}
+<section>
+    <h2>Your Repositories</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Repos}}
+            <tr>
+                <td><a href="/repos/{{.Owner}}/{{.Name}}">{{.Name}}</a></td>
+                <td>{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</section>
+{{end}}
+
+{{end}}

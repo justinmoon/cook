@@ -1,0 +1,22 @@
+{
+  "name": "cook-e2e",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "build:editor": "bun run web/build-editor.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "esbuild": "^0.27.2",
+    "monaco-editor": "^0.45.0",
+    "monaco-languageclient": "^10.6.0",
+    "monaco-vim": "^0.4.1",
+    "nostr-tools": "^2.10.4",
+    "vscode-ws-jsonrpc": "^3.5.0"
+  },
+  "dependencies": {
+    "@codingame/monaco-vscode-api": "^25.0.1"
+  }
+}

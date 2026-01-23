@@ -1,0 +1,28 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h1>Repositories</h1>
+
+{{if .Repos}}
+<table>
+    <thead>
+        <tr>
+            <th>Owner</th>
+            <th>Name</th>
+            <th>Path</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Repos}}
+        <tr>
+            <td>{{.Owner}}</td>
+            <td><a href="/repos/{{.Owner}}/{{.Name}}">{{.Name}}</a></td>
+            <td><code>{{.Path}}</code></td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<p>No repositories found. Create one with <code>cook repo add &lt;owner/name&gt;</code></p>
+{{end}}
+{{end}}

@@ -1,0 +1,32 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h1>Tasks</h1>
+
+{{if .Tasks}}
+<table>
+    <thead>
+        <tr>
+            <th>Slug</th>
+            <th>Repo</th>
+            <th>Title</th>
+            <th>Priority</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Tasks}}
+        <tr>
+            <td><a href="/tasks/{{.Repo}}/{{.Slug}}">{{.Slug}}</a></td>
+            <td><a href="/repos/{{.Repo}}">{{.Repo}}</a></td>
+            <td>{{.Title}}</td>
+            <td>P{{.Priority}}</td>
+            <td class="{{.Status}}">{{.Status}}</td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<p>No tasks found.</p>
+{{end}}
+{{end}}

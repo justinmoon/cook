@@ -1,0 +1,260 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - Cook</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@0.21.4/bundles/datastar.js"></script>
+    <style>
+        :root {
+            --pico-font-size: 16px;
+        }
+        nav {
+            margin-bottom: 2rem;
+        }
+        .status-icon {
+            display: inline-block;
+            width: 1em;
+            text-align: center;
+        }
+        .passed { color: var(--pico-color-green-500); }
+        .failed { color: var(--pico-color-red-500); }
+        .running { color: var(--pico-color-yellow-500); }
+        .open { color: var(--pico-color-blue-500); }
+        .in_progress { color: var(--pico-color-yellow-500); }
+        .closed { color: var(--pico-color-green-500); }
+        .abandoned { color: var(--pico-color-grey-500); }
+        pre {
+            background: var(--pico-background-color);
+            padding: 1rem;
+            overflow-x: auto;
+        }
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .user-name {
+            font-size: 0.875rem;
+            color: var(--pico-muted-color);
+        }
+        /* Command palette */
+        .cmd-palette-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            justify-content: center;
+            padding-top: 15vh;
+        }
+        .cmd-palette-overlay.open {
+            display: flex;
+        }
+        .cmd-palette {
+            background: var(--pico-background-color);
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: 8px;
+            width: 500px;
+            max-width: 90vw;
+            max-height: 400px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        .cmd-palette input {
+            border: none;
+            border-bottom: 1px solid var(--pico-muted-border-color);
+            border-radius: 8px 8px 0 0;
+            padding: 1rem;
+            font-size: 1rem;
+            margin: 0;
+        }
+        .cmd-palette input:focus {
+            outline: none;
+            box-shadow: none;
+        }
+        .cmd-palette-results {
+            overflow-y: auto;
+            flex: 1;
+        }
+        .cmd-palette-item {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .cmd-palette-item:hover,
+        .cmd-palette-item.selected {
+            background: var(--pico-primary-background);
+        }
+        .cmd-palette-item .repo {
+            font-size: 0.8rem;
+            color: var(--pico-muted-color);
+        }
+        .cmd-palette-item .branch {
+            font-weight: 500;
+        }
+        .cmd-palette-empty {
+            padding: 1rem;
+            color: var(--pico-muted-color);
+            text-align: center;
+        }
+        .cmd-palette-hint {
+            padding: 0.5rem 1rem;
+            font-size: 0.75rem;
+            color: var(--pico-muted-color);
+            border-top: 1px solid var(--pico-muted-border-color);
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <nav>
+            <ul>
+                <li><strong><a href="/" class="contrast">Cook</a></strong></li>
+            </ul>
+            <ul>
+                <li><a href="/repos">Repos</a></li>
+                <li><a href="/tasks">Tasks</a></li>
+                <li><a href="/branches">Branches</a></li>
+                {{if .User}}
+                <li><a href="/dashboard">Dashboard</a></li>
+                <li class="user-menu">
+                    <span class="user-name">{{.User.DisplayName}}</span>
+                    <a href="/logout" role="button" class="outline secondary">Logout</a>
+                </li>
+                {{else}}
+                <li><a href="/login" role="button" class="outline">Login</a></li>
+                {{end}}
+            </ul>
+        </nav>
+        {{template "content" .}}
+    </main>
+
+    <!-- Command Palette -->
+    <div class="cmd-palette-overlay" id="cmdPalette">
+        <div class="cmd-palette">
+            <input type="text" id="cmdPaletteInput" placeholder="Search active branches..." autocomplete="off">
+            <div class="cmd-palette-results" id="cmdPaletteResults"></div>
+            <div class="cmd-palette-hint">↑↓ navigate · Enter select · Esc close</div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        const overlay = document.getElementById('cmdPalette');
+        const input = document.getElementById('cmdPaletteInput');
+        const results = document.getElementById('cmdPaletteResults');
+        let branches = [];
+        let selectedIndex = 0;
+
+        async function loadBranches() {
+            try {
+                const res = await fetch('/api/branches/active');
+                branches = await res.json() || [];
+            } catch (e) {
+                branches = [];
+            }
+        }
+
+        function open() {
+            loadBranches().then(() => {
+                overlay.classList.add('open');
+                input.value = '';
+                selectedIndex = 0;
+                render();
+                input.focus();
+            });
+        }
+
+        function close() {
+            overlay.classList.remove('open');
+        }
+
+        function render() {
+            const query = input.value.toLowerCase();
+            const filtered = branches.filter(b => 
+                b.name.toLowerCase().includes(query) || 
+                b.repo.toLowerCase().includes(query)
+            );
+
+            if (filtered.length === 0) {
+                results.innerHTML = '<div class="cmd-palette-empty">No active branches found</div>';
+                return;
+            }
+
+            results.innerHTML = filtered.map((b, i) => `
+                <div class="cmd-palette-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}" data-url="/branches/${b.repo}/${b.name}">
+                    <span class="branch">${b.name}</span>
+                    <span class="repo">${b.repo.split('/')[1]}</span>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            results.querySelectorAll('.cmd-palette-item').forEach(el => {
+                el.addEventListener('click', () => {
+                    window.location.href = el.dataset.url;
+                });
+            });
+        }
+
+        function navigate(dir) {
+            const items = results.querySelectorAll('.cmd-palette-item');
+            if (items.length === 0) return;
+            selectedIndex = Math.max(0, Math.min(items.length - 1, selectedIndex + dir));
+            render();
+        }
+
+        function selectCurrent() {
+            const items = results.querySelectorAll('.cmd-palette-item');
+            if (items[selectedIndex]) {
+                window.location.href = items[selectedIndex].dataset.url;
+            }
+        }
+
+        // Global Ctrl+K listener
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                open();
+            }
+            if (e.key === 'Escape' && overlay.classList.contains('open')) {
+                close();
+            }
+        });
+
+        // Input handlers
+        input.addEventListener('input', () => {
+            selectedIndex = 0;
+            render();
+        });
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                navigate(1);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                navigate(-1);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                selectCurrent();
+            }
+        });
+
+        // Close on overlay click
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+    })();
+    </script>
+</body>
+</html>
+{{end}}

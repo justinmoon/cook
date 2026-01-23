@@ -1,0 +1,16 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "bun run web/build-editor.ts && go build -o ./tmp/cook ./cmd/cook"
+bin = "./tmp/cook serve"
+full_bin = "COOK_AUTH=nostr ./tmp/cook serve"
+include_ext = ["go", "html", "toml", "ts", "tsx"]
+exclude_dir = ["tmp", "node_modules", "test-results", "playwright-report", "internal/server/static"]
+delay = 1000
+
+[screen]
+clear_on_rebuild = true
+
+[misc]
+clean_on_exit = true

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal - {{.Owner}}/{{.Repo}}/{{.Branch}} - Cook</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1e1e1e;
+        }
+        .container {
+            max-width: 100%;
+            padding: 0;
+        }
+        header {
+            background: #2d2d2d;
+            padding: 0.5rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header a {
+            color: #fff;
+            text-decoration: none;
+        }
+        header .branch-name {
+            color: #4ec9b0;
+            font-family: monospace;
+        }
+        #terminal {
+            height: calc(100vh - 50px);
+            padding: 0.5rem;
+        }
+        .status {
+            font-size: 0.8rem;
+            color: #888;
+        }
+        .status.connected { color: #4ec9b0; }
+        .status.disconnected { color: #f44747; }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <a href="/branches/{{.Owner}}/{{.Repo}}/{{.Branch}}">← Back</a>
+            <span class="branch-name">{{.Owner}}/{{.Repo}}/{{.Branch}}</span>
+        </div>
+        <span id="status" class="status">Connecting...</span>
+    </header>
+    <div id="terminal"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+    <script>
+        const term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            theme: {
+                background: '#1e1e1e',
+                foreground: '#d4d4d4',
+                cursor: '#d4d4d4',
+                black: '#000000',
+                red: '#cd3131',
+                green: '#0dbc79',
+                yellow: '#e5e510',
+                blue: '#2472c8',
+                magenta: '#bc3fbc',
+                cyan: '#11a8cd',
+                white: '#e5e5e5',
+                brightBlack: '#666666',
+                brightRed: '#f14c4c',
+                brightGreen: '#23d18b',
+                brightYellow: '#f5f543',
+                brightBlue: '#3b8eea',
+                brightMagenta: '#d670d6',
+                brightCyan: '#29b8db',
+                brightWhite: '#ffffff'
+            }
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+        
+        term.loadAddon(fitAddon);
+        term.loadAddon(webLinksAddon);
+        term.open(document.getElementById('terminal'));
+        fitAddon.fit();
+
+        const statusEl = document.getElementById('status');
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/terminal/{{.Owner}}/{{.Repo}}/{{.Branch}}`);
+        
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+            statusEl.textContent = 'Connected';
+            statusEl.className = 'status connected';
+            
+            // Send initial resize
+            ws.send(JSON.stringify({
+                type: 'resize',
+                data: { rows: term.rows, cols: term.cols }
+            }));
+        };
+
+        ws.onmessage = (event) => {
+            if (event.data instanceof ArrayBuffer) {
+                term.write(new Uint8Array(event.data));
+            } else {
+                term.write(event.data);
+            }
+        };
+
+        ws.onclose = () => {
+            statusEl.textContent = 'Disconnected';
+            statusEl.className = 'status disconnected';
+            term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
+        };
+
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            statusEl.textContent = 'Error';
+            statusEl.className = 'status disconnected';
+        };
+
+        term.onData((data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(data);
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'resize',
+                    data: { rows: term.rows, cols: term.cols }
+                }));
+            }
+        });
+    </script>
+</body>
+</html>

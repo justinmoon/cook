@@ -1,0 +1,1966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Branch.Name}} - Cook</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <link rel="stylesheet" href="/static/editor/editor.css">
+    <style>
+        /* Split layout */
+        .branch-layout {
+            display: flex;
+            height: calc(100vh - 60px);
+            gap: 0;
+        }
+        .branch-sidebar {
+            width: 350px;
+            min-width: 300px;
+            max-width: 450px;
+            overflow-y: auto;
+            padding: 1rem;
+            border-right: 1px solid var(--pico-muted-border-color);
+            background: var(--pico-background-color);
+        }
+        .branch-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: #1e1e1e;
+        }
+        
+        /* Tab bar */
+        .tab-bar {
+            display: flex;
+            align-items: center;
+            background: #2d2d2d;
+            border-bottom: 1px solid #3d3d3d;
+            padding: 0 0.5rem;
+            gap: 0;
+            min-height: 36px;
+        }
+        .tab {
+            display: flex;
+            align-items: center;
+            padding: 0.4rem 0.75rem;
+            background: #252526;
+            border: 1px solid #3d3d3d;
+            border-bottom: none;
+            border-radius: 4px 4px 0 0;
+            margin-right: 2px;
+            cursor: pointer;
+            color: #888;
+            font-size: 0.8rem;
+            position: relative;
+            top: 1px;
+        }
+        .tab:hover {
+            background: #2d2d2d;
+            color: #ccc;
+        }
+        .tab.active {
+            background: #1e1e1e;
+            color: #fff;
+            border-bottom: 1px solid #1e1e1e;
+        }
+        .tab .close-btn {
+            margin-left: 0.5rem;
+            opacity: 0.5;
+            font-size: 0.9rem;
+            line-height: 1;
+        }
+        .tab .close-btn:hover {
+            opacity: 1;
+        }
+        .tab-add {
+            padding: 0.4rem 0.6rem;
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+        }
+        .tab-add:hover {
+            color: #fff;
+        }
+        .tab-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.4rem;
+            background: #888;
+        }
+        .tab-status.connected { background: #4ec9b0; }
+        .tab-status.connecting { background: #d7ba7d; }
+        .tab-status.error { background: #f48771; }
+        .tab-status.disconnected { background: #f44747; }
+        
+        /* Tab drag and drop */
+        .tab.dragging {
+            opacity: 0.5;
+        }
+        .tab.drag-over {
+            border-left: 2px solid #007acc;
+        }
+        
+        /* Terminal panels */
+        .panel-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        .terminal-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 0.5rem;
+            display: none;
+        }
+        .terminal-panel.active {
+            display: block;
+        }
+        .terminal-panel .xterm {
+            height: 100%;
+        }
+        
+        /* Preview panels */
+        .preview-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: none;
+            flex-direction: column;
+            background: #fff;
+        }
+        .preview-panel.active {
+            display: flex;
+        }
+        .preview-url-bar {
+            display: flex;
+            padding: 0.25rem 0.5rem;
+            background: #252526;
+            border-bottom: 1px solid #3d3d3d;
+            gap: 0.4rem;
+            align-items: center;
+        }
+        .preview-url-bar input {
+            flex: 1;
+            padding: 0.2rem 0.5rem;
+            border: 1px solid #3d3d3d;
+            border-radius: 3px;
+            font-size: 0.8rem;
+            font-family: monospace;
+            background: #1e1e1e;
+            color: #ccc;
+        }
+        .preview-url-bar input:focus {
+            outline: none;
+            border-color: #4ec9b0;
+        }
+        .preview-url-bar input::placeholder {
+            color: #666;
+        }
+        .preview-url-bar button {
+            padding: 0.2rem 0.6rem;
+            background: #0e639c;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .preview-url-bar button:hover {
+            background: #1177bb;
+        }
+        .preview-url-bar .nav-btn {
+            padding: 0.2rem 0.4rem;
+            background: #3d3d3d;
+            color: #ccc;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .preview-url-bar .nav-btn:hover:not(:disabled) {
+            background: #4d4d4d;
+        }
+        .preview-url-bar .nav-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .preview-iframe {
+            flex: 1;
+            border: none;
+            background: #fff;
+        }
+
+        /* Command palette */
+        .cmd-palette-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            justify-content: center;
+            padding-top: 15vh;
+        }
+        .cmd-palette-overlay.open {
+            display: flex;
+        }
+        .cmd-palette {
+            background: #1e1e1e;
+            border: 1px solid #3d3d3d;
+            border-radius: 8px;
+            width: 500px;
+            max-width: 90vw;
+            max-height: 400px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .cmd-palette input {
+            border: none;
+            border-bottom: 1px solid #3d3d3d;
+            border-radius: 8px 8px 0 0;
+            padding: 1rem;
+            font-size: 1rem;
+            margin: 0;
+            background: #252526;
+            color: #d4d4d4;
+        }
+        .cmd-palette input:focus {
+            outline: none;
+            box-shadow: none;
+        }
+        .cmd-palette-results {
+            overflow-y: auto;
+            flex: 1;
+        }
+        .cmd-palette-item {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #d4d4d4;
+        }
+        .cmd-palette-item:hover,
+        .cmd-palette-item.selected {
+            background: #094771;
+        }
+        .cmd-palette-item .repo {
+            font-size: 0.8rem;
+            color: #888;
+        }
+        .cmd-palette-item .branch {
+            font-weight: 500;
+        }
+        .cmd-palette-empty {
+            padding: 1rem;
+            color: #888;
+            text-align: center;
+        }
+        .cmd-palette-hint {
+            padding: 0.5rem 1rem;
+            font-size: 0.75rem;
+            color: #888;
+            border-top: 1px solid #3d3d3d;
+        }
+
+        /* Editor panels */
+        .editor-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: none;
+            flex-direction: column;
+            background: #1e1e1e;
+        }
+        .editor-panel.active {
+            display: flex;
+        }
+        .editor-bar {
+            display: flex;
+            padding: 0.25rem 0.5rem;
+            background: #252526;
+            border-bottom: 1px solid #3d3d3d;
+            gap: 0.4rem;
+            align-items: center;
+        }
+        .editor-bar input {
+            flex: 1;
+            padding: 0.2rem 0.5rem;
+            border: 1px solid #3d3d3d;
+            border-radius: 3px;
+            font-size: 0.8rem;
+            font-family: monospace;
+            background: #1e1e1e;
+            color: #ccc;
+        }
+        .editor-bar input:focus {
+            outline: none;
+            border-color: #4ec9b0;
+        }
+        .editor-bar input::placeholder {
+            color: #666;
+        }
+        .editor-bar button {
+            padding: 0.2rem 0.6rem;
+            background: #0e639c;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .editor-bar button:hover {
+            background: #1177bb;
+        }
+        .editor-bar button.secondary {
+            background: #3d3d3d;
+            color: #ccc;
+        }
+        .editor-bar button.secondary:hover {
+            background: #4d4d4d;
+        }
+        .editor-container {
+            flex: 1;
+            min-height: 0;
+        }
+        .editor-debug {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.2rem;
+            background: rgba(37, 37, 38, 0.85);
+            border: 1px solid #3d3d3d;
+            border-radius: 4px;
+        }
+        .editor-debug button {
+            padding: 0.2rem 0.6rem;
+            background: #3d3d3d;
+            color: #ccc;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .editor-debug button:hover {
+            background: #4d4d4d;
+        }
+        
+        /* Vim status bar - bottom bar like real vim */
+        .vim-status-bar {
+            display: none;
+            padding: 0.25rem 0.75rem;
+            background: #252526;
+            color: #d4d4d4;
+            font-family: monospace;
+            font-size: 0.75rem;
+            border-top: 1px solid #3d3d3d;
+        }
+        .vim-status-bar.active {
+            display: block;
+        }
+        /* Vim command line input (triggered by :) */
+        .vim-status-bar input {
+            background: #252526 !important;
+            color: #d4d4d4 !important;
+            border: none !important;
+            outline: none !important;
+            font-family: monospace !important;
+            font-size: 0.75rem !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            width: auto !important;
+            box-shadow: none !important;
+        }
+        .vim-status-bar input:focus {
+            outline: none !important;
+            box-shadow: none !important;
+            border: none !important;
+        }
+        .vim-toggle {
+            padding: 0.2rem 0.5rem;
+            background: #3d3d3d;
+            color: #888;
+            border: 1px solid #4d4d4d;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-family: monospace;
+        }
+        .vim-toggle:hover {
+            background: #4d4d4d;
+            color: #aaa;
+        }
+        .vim-toggle.active {
+            background: #0e639c;
+            color: #fff;
+            border-color: #1177bb;
+        }
+        .vim-toggle.active:hover {
+            background: #1177bb;
+        }
+        
+        /* Code search modal */
+        .code-search-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            justify-content: center;
+            padding-top: 10vh;
+        }
+        .code-search-overlay.open {
+            display: flex;
+        }
+        .code-search-modal {
+            background: #1e1e1e;
+            border: 1px solid #3d3d3d;
+            border-radius: 8px;
+            width: 700px;
+            max-width: 90vw;
+            max-height: 70vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .code-search-header {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            border-bottom: 1px solid #3d3d3d;
+            align-items: center;
+        }
+        .code-search-header input {
+            flex: 1;
+            border: 1px solid #3d3d3d;
+            border-radius: 4px;
+            padding: 0.5rem;
+            font-size: 0.9rem;
+            margin: 0;
+            background: #252526;
+            color: #d4d4d4;
+        }
+        .code-search-header input:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+        .code-search-header label {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.75rem;
+            color: #888;
+            cursor: pointer;
+        }
+        .code-search-results {
+            overflow-y: auto;
+            flex: 1;
+        }
+        .code-search-file-group {
+            border-bottom: 1px solid #2d2d2d;
+        }
+        .code-search-file-header {
+            padding: 0.5rem 0.75rem;
+            background: #252526;
+            font-size: 0.8rem;
+            color: #4ec9b0;
+            font-family: monospace;
+        }
+        .code-search-match {
+            padding: 0.4rem 0.75rem 0.4rem 1.5rem;
+            cursor: pointer;
+            display: flex;
+            gap: 0.75rem;
+            font-size: 0.8rem;
+            color: #d4d4d4;
+        }
+        .code-search-match:hover,
+        .code-search-match.selected {
+            background: #094771;
+        }
+        .code-search-line-num {
+            color: #6e7681;
+            min-width: 3em;
+            text-align: right;
+            font-family: monospace;
+        }
+        .code-search-line-content {
+            flex: 1;
+            white-space: pre;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: monospace;
+        }
+        .code-search-empty {
+            padding: 2rem;
+            text-align: center;
+            color: #888;
+        }
+        .code-search-hint {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.7rem;
+            color: #888;
+            border-top: 1px solid #3d3d3d;
+        }
+        .code-search-truncated {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.75rem;
+            color: #f0ad4e;
+            text-align: center;
+        }
+        
+        /* Sidebar styles */
+        .branch-sidebar h1 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+        }
+        .branch-sidebar h2 {
+            font-size: 1rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .branch-sidebar dl {
+            margin: 0;
+        }
+        .branch-sidebar dt {
+            font-size: 0.75rem;
+            color: var(--pico-muted-color);
+            margin-top: 0.5rem;
+        }
+        .branch-sidebar dd {
+            margin: 0;
+            font-size: 0.875rem;
+        }
+        .branch-sidebar code {
+            font-size: 0.75rem;
+            word-break: break-all;
+        }
+        .branch-sidebar table {
+            font-size: 0.8rem;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+        .action-buttons button, .action-buttons [role="button"] {
+            padding: 0.25rem 0.75rem;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+<div class="branch-layout">
+    <!-- Left sidebar with branch info -->
+    <div class="branch-sidebar">
+        <h1>{{.Branch.Name}}</h1>
+        
+        {{if eq .Branch.Status "active"}}
+        <div class="action-buttons">
+            {{if and .IsOwner .ConfiguredGates}}
+            <form method="POST" action="/branches/{{.Branch.Repo}}/{{.Branch.Name}}/gates/run" style="display: inline;">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <button type="submit">Run Gates</button>
+            </form>
+            {{end}}
+            {{if .IsOwner}}
+            {{if .NeedsRebase}}
+            <form method="POST" action="/branches/{{.Branch.Repo}}/{{.Branch.Name}}/rebase" style="display: inline;">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <button type="submit" class="contrast">Rebase</button>
+            </form>
+            {{else}}
+            <form method="POST" action="/branches/{{.Branch.Repo}}/{{.Branch.Name}}/merge" style="display: inline;">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <button type="submit" class="contrast" {{if not .CanMerge}}disabled title="Gates must pass on current HEAD to merge"{{end}}>Merge</button>
+            </form>
+            {{end}}
+            <form method="POST" action="/branches/{{.Branch.Repo}}/{{.Branch.Name}}/abandon" style="display: inline;">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <button type="submit" class="secondary">Abandon</button>
+            </form>
+            {{end}}
+        </div>
+        {{end}}
+
+        <dl>
+            <dt>Repository</dt>
+            <dd><a href="/repos/{{.Branch.Repo}}">{{.Branch.Repo}}</a></dd>
+            
+            <dt>Status</dt>
+            <dd class="{{.Branch.Status}}">{{.Branch.Status}}</dd>
+            
+            {{if .Branch.Environment.Path}}
+            <dt>Checkout Path</dt>
+            <dd><code>{{.Branch.Environment.Path}}</code></dd>
+            {{end}}
+            
+            {{if .Task}}
+            <dt>Linked Task</dt>
+            <dd><a href="/tasks/{{.Task.Repo}}/{{.Task.Slug}}">{{.Task.Title}}</a> ({{.Task.Status}})</dd>
+            {{end}}
+            
+            <dt>Created</dt>
+            <dd>{{.Branch.CreatedAt.Format "2006-01-02 15:04:05"}}</dd>
+        </dl>
+
+        {{if .ConfiguredGates}}
+        <h2>Configured Gates</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Command</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .ConfiguredGates}}
+                <tr>
+                    <td>{{.Name}}</td>
+                    <td><code>{{.Command}}</code></td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{end}}
+
+        {{if .GateRuns}}
+        <h2>Gates{{if .GatesStale}} <span style="font-size: 0.75rem; color: var(--pico-del-color);">(stale)</span>{{end}}</h2>
+        {{if .GatesStale}}
+        <p style="font-size: 0.75rem; color: var(--pico-muted-color); margin-bottom: 0.5rem;">Results from older commit - re-run required to merge</p>
+        {{end}}
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            {{range .GateRuns}}
+            <div style="display: flex; align-items: center; gap: 0.4rem;">
+                {{if eq .Status "passed"}}✅{{else if eq .Status "failed"}}❌{{else if eq .Status "running"}}🔄{{else}}⏳{{end}}
+                <span>{{.GateName}}</span>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+
+    <!-- Right panel with tabbed terminals -->
+    <div class="branch-main">
+        <div class="tab-bar" id="tabBar">
+            <!-- Tabs will be added here dynamically -->
+            <button class="tab-add" id="addTabBtn" title="New Terminal">+</button>
+            <button class="tab-add" id="addPreviewBtn" title="New Preview">&#x1F310;</button>
+            <button class="tab-add" id="addEditorBtn" title="New Editor">&lt;/&gt;</button>
+        </div>
+        <div class="panel-container" id="panelContainer">
+            <!-- Terminal panels will be added here dynamically -->
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+<script>
+const fileListUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/files/list`;
+let fileListCache = null;
+let tabs = [];
+let activeTabId = null;
+let tabCounter = 0;
+
+(function() {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsBaseUrl = `${wsProtocol}//${window.location.host}/ws/terminal/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}`;
+    const lspWsBaseUrl = `${wsProtocol}//${window.location.host}/ws/lsp/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}`;
+    const apiBaseUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/tabs`;
+    const previewApiUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/previews`;
+    const editorApiUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/editors`;
+    const fileApiUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/files`;
+    const csrfToken = '{{.CSRFToken}}';
+    const checkoutPath = '{{.Branch.Environment.Path}}';
+    
+    const tabBar = document.getElementById('tabBar');
+    const addTabBtn = document.getElementById('addTabBtn');
+    const addPreviewBtn = document.getElementById('addPreviewBtn');
+    const addEditorBtn = document.getElementById('addEditorBtn');
+    const panelContainer = document.getElementById('panelContainer');
+    
+    const terminalTheme = {
+        background: '#1e1e1e',
+        foreground: '#d4d4d4',
+        cursor: '#d4d4d4',
+        black: '#000000',
+        red: '#cd3131',
+        green: '#0dbc79',
+        yellow: '#e5e510',
+        blue: '#2472c8',
+        magenta: '#bc3fbc',
+        cyan: '#11a8cd',
+        white: '#e5e5e5',
+        brightBlack: '#666666',
+        brightRed: '#f14c4c',
+        brightGreen: '#23d18b',
+        brightYellow: '#f5f543',
+        brightBlue: '#3b8eea',
+        brightMagenta: '#d670d6',
+        brightCyan: '#29b8db',
+        brightWhite: '#ffffff'
+    };
+    
+    let draggedTab = null;
+    
+    function setupTabDragDrop(tabEl) {
+        tabEl.addEventListener('dragstart', (e) => {
+            draggedTab = tabEl;
+            tabEl.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        
+        tabEl.addEventListener('dragend', () => {
+            tabEl.classList.remove('dragging');
+            draggedTab = null;
+            document.querySelectorAll('.tab.drag-over').forEach(t => t.classList.remove('drag-over'));
+        });
+        
+        tabEl.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (!draggedTab || draggedTab === tabEl) return;
+            tabEl.classList.add('drag-over');
+        });
+        
+        tabEl.addEventListener('dragleave', () => {
+            tabEl.classList.remove('drag-over');
+        });
+        
+        tabEl.addEventListener('drop', (e) => {
+            e.preventDefault();
+            tabEl.classList.remove('drag-over');
+            if (!draggedTab || draggedTab === tabEl) return;
+            
+            // Reorder in DOM
+            const allTabs = Array.from(tabBar.querySelectorAll('.tab'));
+            const draggedIdx = allTabs.indexOf(draggedTab);
+            const targetIdx = allTabs.indexOf(tabEl);
+            
+            if (draggedIdx < targetIdx) {
+                tabEl.after(draggedTab);
+            } else {
+                tabEl.before(draggedTab);
+            }
+            
+            // Reorder in tabs array
+            const draggedTabData = tabs.find(t => t.tabEl === draggedTab);
+            const targetTabData = tabs.find(t => t.tabEl === tabEl);
+            const draggedArrIdx = tabs.indexOf(draggedTabData);
+            const targetArrIdx = tabs.indexOf(targetTabData);
+            
+            tabs.splice(draggedArrIdx, 1);
+            tabs.splice(targetArrIdx, 0, draggedTabData);
+        });
+    }
+    
+    function createTab(name, isAgent = false, existingId = null, deferConnect = false) {
+        const id = existingId || `tab-${Date.now()}-${tabCounter++}`;
+        
+        // Persist non-agent tabs to DB
+        if (!isAgent && !existingId) {
+            fetch(apiBaseUrl, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': csrfToken
+                },
+                body: JSON.stringify({ id, name })
+            });
+        }
+        
+        // Create tab element
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab';
+        tabEl.dataset.tabId = id;
+        tabEl.draggable = true;
+        tabEl.innerHTML = `
+            <span class="tab-status"></span>
+            <span class="tab-name">${name}</span>
+            ${tabs.length > 0 ? '<span class="close-btn">×</span>' : ''}
+        `;
+        tabBar.insertBefore(tabEl, addTabBtn);
+        setupTabDragDrop(tabEl);
+        
+        // Create panel
+        const panelEl = document.createElement('div');
+        panelEl.className = 'terminal-panel';
+        panelEl.id = `panel-${id}`;
+        panelContainer.appendChild(panelEl);
+        
+        // Create terminal
+        const term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            theme: terminalTheme
+        });
+        const fitAddon = new FitAddon.FitAddon();
+        const webLinksAddon = new WebLinksAddon.WebLinksAddon();
+        term.loadAddon(fitAddon);
+        term.loadAddon(webLinksAddon);
+        term.open(panelEl);
+        
+        // Tab object (ws added after connection)
+        const tab = { id, name, tabEl, panelEl, term, fitAddon, ws: null, isAgent };
+        tabs.push(tab);
+        
+        // Tab click handler
+        tabEl.addEventListener('click', (e) => {
+            if (e.target.classList.contains('close-btn')) {
+                closeTab(id);
+            } else {
+                activateTab(id);
+            }
+        });
+        
+        // Connect function - called immediately or when tab is activated
+        let connecting = false;
+        function connect() {
+            if (tab.ws || connecting) return; // Already connected or connecting
+            connecting = true;
+            
+            // Make sure panel is visible
+            tab.panelEl.classList.add('active');
+            
+            setTimeout(() => {
+                fitAddon.fit();
+                
+                const sizeParams = `rows=${term.rows}&cols=${term.cols}`;
+                let wsUrl = isAgent ? wsBaseUrl : `${wsBaseUrl}?tab=${id}`;
+                wsUrl += (wsUrl.includes('?') ? '&' : '?') + sizeParams;
+                const ws = new WebSocket(wsUrl);
+                ws.binaryType = 'arraybuffer';
+                tab.ws = ws;
+                
+                ws.onopen = () => {
+                    updateTabStatus(id, 'connected');
+                    fitAddon.fit();
+                    ws.send(JSON.stringify({
+                        type: 'resize',
+                        data: { rows: term.rows, cols: term.cols }
+                    }));
+                };
+                
+                ws.onmessage = (event) => {
+                    if (event.data instanceof ArrayBuffer) {
+                        term.write(new Uint8Array(event.data));
+                    } else {
+                        term.write(event.data);
+                    }
+                };
+                
+                ws.onclose = () => {
+                    updateTabStatus(id, 'disconnected');
+                    term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
+                };
+                
+                ws.onerror = () => {
+                    updateTabStatus(id, 'disconnected');
+                };
+                
+                term.onData((data) => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(data);
+                    }
+                });
+            }, 50);
+        }
+        
+        tab.connect = connect;
+        
+        // Connect immediately unless deferred (saved tabs wait until activated)
+        if (!deferConnect) {
+            activateTab(id);
+            connect();
+        }
+        
+        return tab;
+    }
+    
+    function createPreviewTab(name = 'Preview', existingData = null) {
+        const id = existingData?.id || `preview-${Date.now()}-${tabCounter++}`;
+        const history = existingData?.history || [];
+        let historyIndex = existingData?.history_index ?? -1;
+        const initialUrl = existingData?.current_url || '';
+        
+        // Persist new preview tabs to DB
+        if (!existingData) {
+            fetch(previewApiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                body: JSON.stringify({ id, name })
+            });
+        }
+        
+        // Create tab element
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab';
+        tabEl.dataset.tabId = id;
+        tabEl.draggable = true;
+        tabEl.innerHTML = `
+            <span class="tab-status connected"></span>
+            <span class="tab-name">${name}</span>
+            <span class="close-btn">×</span>
+        `;
+        tabBar.insertBefore(tabEl, addTabBtn);
+        setupTabDragDrop(tabEl);
+        
+        // Create preview panel with back/forward/refresh buttons
+        const panelEl = document.createElement('div');
+        panelEl.className = 'preview-panel';
+        panelEl.id = `panel-${id}`;
+        panelEl.innerHTML = `
+            <div class="preview-url-bar">
+                <button class="nav-btn back-btn" title="Back (Ctrl+[)" disabled>&#x2190;</button>
+                <button class="nav-btn forward-btn" title="Forward (Ctrl+])" disabled>&#x2192;</button>
+                <button class="nav-btn refresh-btn" title="Refresh (Ctrl+R)">&#x21bb;</button>
+                <input type="text" placeholder="http://localhost:3000" value="${initialUrl}">
+                <button class="go-btn">Go</button>
+            </div>
+            <iframe class="preview-iframe" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+        `;
+        panelContainer.appendChild(panelEl);
+        
+        const backBtn = panelEl.querySelector('.back-btn');
+        const forwardBtn = panelEl.querySelector('.forward-btn');
+        const refreshBtn = panelEl.querySelector('.refresh-btn');
+        const urlInput = panelEl.querySelector('input');
+        const goBtn = panelEl.querySelector('.go-btn');
+        const iframe = panelEl.querySelector('iframe');
+        
+        function updateNavButtons() {
+            backBtn.disabled = historyIndex <= 0;
+            forwardBtn.disabled = historyIndex >= history.length - 1;
+        }
+        
+        function saveState() {
+            fetch(`${previewApiUrl}/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                body: JSON.stringify({
+                    current_url: urlInput.value,
+                    history: history,
+                    history_index: historyIndex
+                })
+            });
+        }
+        
+        function addToHistory(url) {
+            // Don't add duplicates of current URL
+            if (history[historyIndex] === url) return;
+            
+            // Truncate forward history and add new entry
+            history.splice(historyIndex + 1);
+            history.push(url);
+            historyIndex = history.length - 1;
+            updateNavButtons();
+            saveState();
+        }
+        
+        function navigate(url) {
+            if (!url) return;
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'http://' + url;
+            }
+            urlInput.value = url;
+            iframe.src = url;
+            addToHistory(url);
+        }
+        
+        // Try to track iframe navigation (works for same-origin, fails silently for cross-origin)
+        iframe.addEventListener('load', () => {
+            try {
+                const newUrl = iframe.contentWindow.location.href;
+                if (newUrl && newUrl !== 'about:blank' && newUrl !== urlInput.value) {
+                    urlInput.value = newUrl;
+                    addToHistory(newUrl);
+                }
+            } catch (e) {
+                // Cross-origin - can't access URL, that's fine
+            }
+        });
+        
+        function goBack() {
+            if (historyIndex > 0) {
+                historyIndex--;
+                const url = history[historyIndex];
+                urlInput.value = url;
+                iframe.src = url;
+                updateNavButtons();
+                saveState();
+            }
+        }
+        
+        function goForward() {
+            if (historyIndex < history.length - 1) {
+                historyIndex++;
+                const url = history[historyIndex];
+                urlInput.value = url;
+                iframe.src = url;
+                updateNavButtons();
+                saveState();
+            }
+        }
+        
+        function refresh() {
+            const url = urlInput.value.trim();
+            if (url) {
+                iframe.src = url;
+            }
+        }
+        
+        backBtn.addEventListener('click', goBack);
+        forwardBtn.addEventListener('click', goForward);
+        refreshBtn.addEventListener('click', refresh);
+        goBtn.addEventListener('click', () => navigate(urlInput.value.trim()));
+        urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') navigate(urlInput.value.trim());
+        });
+        
+        // Load initial URL if restoring
+        if (initialUrl) {
+            iframe.src = initialUrl;
+            updateNavButtons();
+        }
+        
+        const tab = { id, name, tabEl, panelEl, isPreview: true, urlInput, iframe, history, historyIndex, goBack, goForward, refresh };
+        tabs.push(tab);
+        
+        // Tab click handler
+        tabEl.addEventListener('click', (e) => {
+            if (e.target.classList.contains('close-btn')) {
+                closeTab(id);
+            } else {
+                activateTab(id);
+            }
+        });
+        
+        activateTab(id);
+        urlInput.focus();
+        
+        return tab;
+    }
+
+    let editorBundlePromise = null;
+    function loadEditorBundle() {
+        if (window.CookEditor) return Promise.resolve(window.CookEditor);
+        if (editorBundlePromise) return editorBundlePromise;
+        editorBundlePromise = import('/static/editor/editor.js')
+            .then((mod) => mod.default || mod.CookEditor || mod);
+        return editorBundlePromise;
+    }
+
+    function inferLanguageId(filePath) {
+        const p = (filePath || '').toLowerCase();
+        if (p.endsWith('.go')) return 'go';
+        if (p.endsWith('.rs')) return 'rust';
+        if (p.endsWith('.ts') || p.endsWith('.tsx')) return 'typescript';
+        if (p.endsWith('.js') || p.endsWith('.jsx')) return 'javascript';
+        if (p.endsWith('.json')) return 'json';
+        if (p.endsWith('.md')) return 'markdown';
+        if (p.endsWith('.html') || p.endsWith('.htm')) return 'html';
+        if (p.endsWith('.css')) return 'css';
+        if (p.endsWith('.py')) return 'python';
+        if (p.endsWith('.toml')) return 'toml';
+        if (p.endsWith('.yaml') || p.endsWith('.yml')) return 'yaml';
+        if (p.endsWith('.nix')) return 'nix';
+        return 'plaintext';
+    }
+
+    function createEditorTab(name = 'Editor', existingData = null, deferActivate = false) {
+        const id = existingData?.id || `editor-${Date.now()}-${tabCounter++}`;
+        let currentPath = existingData?.path || '';
+        const initialViewState = existingData?.view_state_json || null;
+        
+        // Persist new editor tabs to DB
+        if (!existingData) {
+            fetch(editorApiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                body: JSON.stringify({ id, name })
+            });
+        }
+        
+        // Create tab element
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab';
+        tabEl.dataset.tabId = id;
+        tabEl.draggable = true;
+        tabEl.innerHTML = `
+            <span class="tab-status disconnected"></span>
+            <span class="tab-name">${name}</span>
+            <span class="close-btn">×</span>
+        `;
+        tabBar.insertBefore(tabEl, addTabBtn);
+        setupTabDragDrop(tabEl);
+        
+        // Create editor panel with vim toggle
+        const panelEl = document.createElement('div');
+        panelEl.className = 'editor-panel';
+        panelEl.id = `panel-${id}`;
+        panelEl.innerHTML = `
+            <div class="editor-bar">
+                <span style="flex:1"></span>
+                <button class="vim-toggle" title="Toggle Vim Mode">VIM</button>
+            </div>
+            <div class="editor-container"></div>
+            <div class="vim-status-bar"></div>
+        `;
+        panelContainer.appendChild(panelEl);
+        
+        const editorContainer = panelEl.querySelector('.editor-container');
+        const vimToggleBtn = panelEl.querySelector('.vim-toggle');
+        const vimStatusBar = panelEl.querySelector('.vim-status-bar');
+        
+        let editorInstance = null;
+        let dirty = false;
+        let initStarted = false;
+        let persistTimer = null;
+        
+        function setDirty(v) {
+            dirty = v;
+            const nameEl = tabEl.querySelector('.tab-name');
+            nameEl.textContent = dirty ? `${name} *` : name;
+        }
+        
+        function schedulePersist() {
+            if (persistTimer) clearTimeout(persistTimer);
+            persistTimer = setTimeout(() => {
+                if (!editorInstance) return;
+                fetch(`${editorApiUrl}/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({
+                        name,
+                        path: currentPath,
+                        view_state_json: editorInstance.saveViewState() || {}
+                    })
+                });
+            }, 500);
+        }
+        
+        async function ensureEditor() {
+            if (editorInstance) return editorInstance;
+            if (!checkoutPath) throw new Error('Branch has no checkout');
+            const CookEditor = await loadEditorBundle();
+            editorInstance = await CookEditor.create(editorContainer, checkoutPath, (status) => updateTabStatus(id, status));
+            editorInstance.onDidChangeContent(() => {
+                if (!dirty) setDirty(true);
+                schedulePersist();
+            });
+            // Handle "Go to Definition" navigation
+            editorInstance.onOpenFile((request) => {
+                console.log('[GoToDefinition] Requested:', request);
+                // Convert file:// URI to relative path
+                const prefix = `file://${checkoutPath}`;
+                let targetPath = request.uri;
+                if (targetPath.startsWith(prefix)) {
+                    targetPath = targetPath.slice(prefix.length).replace(/^\/+/, '');
+                } else if (targetPath.startsWith('file://')) {
+                    targetPath = targetPath.slice(7).replace(/^\/+/, '');
+                }
+                console.log('[GoToDefinition] Opening:', targetPath, 'line:', request.lineNumber);
+                // Open the file
+                openFile(targetPath).then(() => {
+                    // Jump to line/column if specified
+                    if (request.lineNumber && editorInstance) {
+                        editorInstance.setPosition(request.lineNumber, request.column);
+                        editorInstance.revealLine(request.lineNumber);
+                    }
+                    console.log('[GoToDefinition] Done');
+                }).catch(err => console.error('Failed to open file:', err));
+            });
+            
+            // Test helper for Go to Definition
+            window.testGoToDefinition = async function(line, column) {
+                if (!editorInstance) return 'No editor';
+                editorInstance.setPosition(line, column || 1);
+                editorInstance.revealLine(line);
+                editorInstance.triggerGoToDefinition();
+                return 'Triggered';
+            };
+            window.currentEditorPath = () => currentPath;
+            
+            return editorInstance;
+        }
+        
+        async function openFile(relPath) {
+            relPath = (relPath || '').trim().replace(/^\/+/, '');
+            if (!relPath) return;
+            currentPath = relPath;
+            
+            const res = await fetch(`${fileApiUrl}?path=${encodeURIComponent(relPath)}`);
+            if (!res.ok) throw new Error(`Failed to load file: ${res.status}`);
+            const content = await res.text();
+            
+            const absPath = checkoutPath.replace(/\/+$/, '') + '/' + relPath;
+            const uri = `file://${absPath}`;
+            const languageId = inferLanguageId(relPath);
+            const lspUrl = `${lspWsBaseUrl}?languageId=${encodeURIComponent(languageId)}`;
+            
+            const ed = await ensureEditor();
+            ed.open({ filePath: relPath, uri, content, lspUrl });
+            
+            if (initialViewState) {
+                try { ed.restoreViewState(initialViewState); } catch {}
+            }
+            
+            ed.layout();
+            ed.focus();
+            setDirty(false);
+            schedulePersist();
+        }
+        
+        async function saveFile() {
+            if (!editorInstance || !currentPath) return;
+            const body = editorInstance.getValue();
+            const res = await fetch(`${fileApiUrl}?path=${encodeURIComponent(currentPath)}`, {
+                method: 'PUT',
+                headers: { 'X-CSRF-Token': csrfToken },
+                body
+            });
+            if (!res.ok) throw new Error(`Failed to save: ${res.status}`);
+            setDirty(false);
+        }
+        
+        // Vim mode toggle
+        function updateVimUI(enabled) {
+            vimToggleBtn.classList.toggle('active', enabled);
+            vimStatusBar.classList.toggle('active', enabled);
+        }
+        
+        async function toggleVim() {
+            const ed = await ensureEditor();
+            if (ed.isVimEnabled()) {
+                ed.disableVim();
+                vimStatusBar.textContent = '';
+                updateVimUI(false);
+                localStorage.setItem('cook:vimMode', 'false');
+            } else {
+                ed.enableVim(vimStatusBar);
+                updateVimUI(true);
+                localStorage.setItem('cook:vimMode', 'true');
+            }
+            ed.focus();
+        }
+        
+        vimToggleBtn.addEventListener('click', toggleVim);
+        
+        // Restore vim mode preference when editor loads (on by default)
+        async function restoreVimMode() {
+            if (localStorage.getItem('cook:vimMode') !== 'false') {
+                const ed = await ensureEditor();
+                ed.enableVim(vimStatusBar);
+                updateVimUI(true);
+            }
+        }
+        
+        const tab = { 
+            id, name, tabEl, panelEl, isEditor: true,
+            openFile, saveFile,  // Expose for Cmd+P and Cmd+S
+            init: () => {
+                if (initStarted) return;
+                initStarted = true;
+                if (currentPath) {
+                    openFile(currentPath).then(() => restoreVimMode()).catch(err => console.error(err));
+                } else {
+                    ensureEditor().then(ed => { ed.layout(); ed.focus(); restoreVimMode(); }).catch(err => console.error(err));
+                }
+            },
+            dispose: () => {
+                if (editorInstance) editorInstance.dispose();
+            },
+        };
+        tabs.push(tab);
+        
+        tabEl.addEventListener('click', (e) => {
+            if (e.target.classList.contains('close-btn')) {
+                closeTab(id);
+            } else {
+                activateTab(id);
+            }
+        });
+        
+        if (!deferActivate) {
+            activateTab(id);
+        }
+        
+        return tab;
+    }
+    window.createEditorTab = createEditorTab;
+    
+    function activateTab(id) {
+        tabs.forEach(tab => {
+            if (tab.id === id) {
+                tab.tabEl.classList.add('active');
+                tab.panelEl.classList.add('active');
+                if (tab.fitAddon) {
+                    tab.fitAddon.fit();
+                }
+                if (tab.term) {
+                    tab.term.focus();
+                } else if (tab.urlInput) {
+                    tab.urlInput.focus();
+                } else if (tab.isEditor) {
+                    if (tab.init) tab.init();
+                }
+                // Connect if not yet connected (deferred tabs)
+                if (tab.connect && !tab.ws) {
+                    tab.connect();
+                }
+            } else {
+                tab.tabEl.classList.remove('active');
+                tab.panelEl.classList.remove('active');
+            }
+        });
+        activeTabId = id;
+        localStorage.setItem('activeTab:{{.Owner}}/{{.Repo}}/{{.Branch.Name}}', id);
+    }
+    window.activateTab = activateTab;
+    
+    function closeTab(id) {
+        const idx = tabs.findIndex(t => t.id === id);
+        if (idx === -1 || tabs.length <= 1) return;
+        
+        const tab = tabs[idx];
+        
+        // Delete from DB
+        if (tab.isPreview) {
+            fetch(`${previewApiUrl}/${id}`, { 
+                method: 'DELETE',
+                headers: { 'X-CSRF-Token': csrfToken }
+            });
+        } else if (tab.isEditor) {
+            fetch(`${editorApiUrl}/${id}`, { 
+                method: 'DELETE',
+                headers: { 'X-CSRF-Token': csrfToken }
+            });
+        } else if (!tab.isAgent) {
+            fetch(`${apiBaseUrl}/${id}`, { 
+                method: 'DELETE',
+                headers: { 'X-CSRF-Token': csrfToken }
+            });
+        }
+        
+        // Clean up terminal resources if present
+        if (tab.ws) tab.ws.close();
+        if (tab.term) tab.term.dispose();
+        if (tab.dispose) tab.dispose();
+        
+        tab.tabEl.remove();
+        tab.panelEl.remove();
+        tabs.splice(idx, 1);
+        
+        if (activeTabId === id) {
+            activateTab(tabs[Math.max(0, idx - 1)].id);
+        }
+    }
+    
+    function updateTabStatus(id, status) {
+        const tab = tabs.find(t => t.id === id);
+        if (tab) {
+            const statusEl = tab.tabEl.querySelector('.tab-status');
+            statusEl.className = `tab-status ${status}`;
+        }
+    }
+    
+    // Add tab buttons
+    addTabBtn.addEventListener('click', () => {
+        createTab(`Shell ${tabs.length + 1}`);
+    });
+    
+    addPreviewBtn.addEventListener('click', () => {
+        createPreviewTab('Preview');
+    });
+
+    addEditorBtn.addEventListener('click', () => {
+        createEditorTab('Editor');
+    });
+    
+    // Window resize handler
+    window.addEventListener('resize', () => {
+        const activeTab = tabs.find(t => t.id === activeTabId);
+        if (activeTab && activeTab.fitAddon && activeTab.ws) {
+            activeTab.fitAddon.fit();
+            if (activeTab.ws.readyState === WebSocket.OPEN) {
+                activeTab.ws.send(JSON.stringify({
+                    type: 'resize',
+                    data: { rows: activeTab.term.rows, cols: activeTab.term.cols }
+                }));
+            }
+        }
+    });
+    
+    // Keyboard shortcuts for preview tabs
+    window.addEventListener('keydown', (e) => {
+        const activeTab = tabs.find(t => t.id === activeTabId);
+        if (!activeTab || !activeTab.isPreview) return;
+        
+        if (e.ctrlKey && e.key === '[') {
+            e.preventDefault();
+            activeTab.goBack();
+        } else if (e.ctrlKey && e.key === ']') {
+            e.preventDefault();
+            activeTab.goForward();
+        } else if (e.ctrlKey && e.key === 'r') {
+            e.preventDefault();
+            activeTab.refresh();
+        }
+    });
+    
+    // Load saved tabs from server
+    async function init() {
+        // Create agent tab first
+        createTab('Agent', true);
+        
+        // Load persisted shell tabs
+        try {
+            const res = await fetch(apiBaseUrl);
+            const savedTabs = await res.json();
+            if (savedTabs && savedTabs.length > 0) {
+                for (const t of savedTabs) {
+                    // deferConnect=true - don't connect until tab is activated
+                    createTab(t.name, false, t.id, true);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load tabs:', e);
+        }
+        
+        // Load persisted preview tabs
+        try {
+            const res = await fetch(previewApiUrl);
+            const savedPreviews = await res.json();
+            if (savedPreviews && savedPreviews.length > 0) {
+                for (const p of savedPreviews) {
+                    createPreviewTab(p.name, p);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load preview tabs:', e);
+        }
+        
+        // Restore active tab or default to first tab
+        const savedActiveTab = localStorage.getItem('activeTab:{{.Owner}}/{{.Repo}}/{{.Branch.Name}}');
+        const tabToActivate = savedActiveTab && tabs.find(t => t.id === savedActiveTab);
+        if (tabToActivate) {
+            activateTab(tabToActivate.id);
+        } else if (tabs.length > 0) {
+            activateTab(tabs[0].id);
+        }
+    }
+    
+    init();
+})();
+</script>
+
+<!-- Command Palette -->
+<div class="cmd-palette-overlay" id="cmdPalette">
+    <div class="cmd-palette">
+        <input type="text" id="cmdPaletteInput" placeholder="Search active branches..." autocomplete="off">
+        <div class="cmd-palette-results" id="cmdPaletteResults"></div>
+        <div class="cmd-palette-hint">↑↓ navigate · Enter select · Esc close</div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const overlay = document.getElementById('cmdPalette');
+    const input = document.getElementById('cmdPaletteInput');
+    const results = document.getElementById('cmdPaletteResults');
+    let branches = [];
+    let selectedIndex = 0;
+
+    async function loadBranches() {
+        try {
+            const res = await fetch('/api/branches/active');
+            branches = await res.json() || [];
+        } catch (e) {
+            branches = [];
+        }
+    }
+
+    function open() {
+        loadBranches().then(() => {
+            overlay.classList.add('open');
+            input.value = '';
+            selectedIndex = 0;
+            render();
+            input.focus();
+        });
+    }
+
+    function close() {
+        overlay.classList.remove('open');
+    }
+
+    function render() {
+        const query = input.value.toLowerCase();
+        const filtered = branches.filter(b => 
+            b.name.toLowerCase().includes(query) || 
+            b.repo.toLowerCase().includes(query)
+        );
+
+        if (filtered.length === 0) {
+            results.innerHTML = '<div class="cmd-palette-empty">No active branches found</div>';
+            return;
+        }
+
+        results.innerHTML = filtered.map((b, i) => `
+            <div class="cmd-palette-item ${i === selectedIndex ? 'selected' : ''}" data-index="${i}" data-url="/branches/${b.repo}/${b.name}">
+                <span class="branch">${b.name}</span>
+                <span class="repo">${b.repo.split('/')[1]}</span>
+            </div>
+        `).join('');
+
+        results.querySelectorAll('.cmd-palette-item').forEach(el => {
+            el.addEventListener('click', () => {
+                window.location.href = el.dataset.url;
+            });
+        });
+    }
+
+    function navigate(dir) {
+        const items = results.querySelectorAll('.cmd-palette-item');
+        if (items.length === 0) return;
+        selectedIndex = Math.max(0, Math.min(items.length - 1, selectedIndex + dir));
+        render();
+    }
+
+    function selectCurrent() {
+        const items = results.querySelectorAll('.cmd-palette-item');
+        if (items[selectedIndex]) {
+            window.location.href = items[selectedIndex].dataset.url;
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            open();
+        }
+        if (e.key === 'Escape' && overlay.classList.contains('open')) {
+            close();
+        }
+    });
+
+    input.addEventListener('input', () => {
+        selectedIndex = 0;
+        render();
+    });
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            navigate(1);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            navigate(-1);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            selectCurrent();
+        }
+    });
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+    });
+})();
+</script>
+
+<!-- File Picker -->
+<div class="cmd-palette-overlay" id="filePicker">
+    <div class="cmd-palette">
+        <input type="text" id="filePickerInput" placeholder="Search files..." autocomplete="off">
+        <div class="cmd-palette-results" id="filePickerResults"></div>
+        <div class="cmd-palette-hint">↑↓ navigate · Enter open · Esc close</div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const overlay = document.getElementById('filePicker');
+    const input = document.getElementById('filePickerInput');
+    const results = document.getElementById('filePickerResults');
+    let files = [];
+    let selectedIndex = 0;
+    let onSelectCallback = null;
+
+    async function loadFiles() {
+        if (fileListCache) {
+            files = fileListCache;
+            return;
+        }
+        try {
+            const res = await fetch(fileListUrl);
+            files = await res.json() || [];
+            fileListCache = files;
+        } catch (e) {
+            files = [];
+        }
+    }
+
+    function fuzzyMatch(query, text) {
+        query = query.toLowerCase();
+        text = text.toLowerCase();
+        let qi = 0;
+        for (let ti = 0; ti < text.length && qi < query.length; ti++) {
+            if (text[ti] === query[qi]) qi++;
+        }
+        return qi === query.length;
+    }
+
+    window.openFilePicker = function(callback) {
+        onSelectCallback = callback;
+        loadFiles().then(() => {
+            overlay.classList.add('open');
+            input.value = '';
+            selectedIndex = 0;
+            render();
+            input.focus();
+        });
+    };
+
+    function close() {
+        overlay.classList.remove('open');
+        onSelectCallback = null;
+    }
+
+    function render() {
+        const query = input.value;
+        const filtered = query 
+            ? files.filter(f => fuzzyMatch(query, f)).slice(0, 50)
+            : files.slice(0, 50);
+
+        if (filtered.length === 0) {
+            results.innerHTML = '<div class="cmd-palette-empty">No files found</div>';
+            return;
+        }
+
+        if (selectedIndex >= filtered.length) selectedIndex = filtered.length - 1;
+
+        results.innerHTML = filtered.map((f, i) => {
+            const parts = f.split('/');
+            const filename = parts.pop();
+            const dir = parts.join('/');
+            return `
+                <div class="cmd-palette-item ${i === selectedIndex ? 'selected' : ''}" data-path="${f}">
+                    <span class="branch">${filename}</span>
+                    <span class="repo">${dir || '.'}</span>
+                </div>
+            `;
+        }).join('');
+
+        results.querySelectorAll('.cmd-palette-item').forEach(el => {
+            el.addEventListener('click', () => {
+                if (onSelectCallback) onSelectCallback(el.dataset.path);
+                close();
+            });
+        });
+
+        // Scroll selected into view
+        const selectedEl = results.querySelector('.selected');
+        if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest' });
+    }
+
+    function navigate(dir) {
+        const items = results.querySelectorAll('.cmd-palette-item');
+        if (items.length === 0) return;
+        selectedIndex = Math.max(0, Math.min(items.length - 1, selectedIndex + dir));
+        render();
+    }
+
+    function selectCurrent() {
+        const items = results.querySelectorAll('.cmd-palette-item');
+        if (items[selectedIndex] && onSelectCallback) {
+            onSelectCallback(items[selectedIndex].dataset.path);
+            close();
+        }
+    }
+
+    input.addEventListener('input', () => {
+        selectedIndex = 0;
+        render();
+    });
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            navigate(1);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            navigate(-1);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            selectCurrent();
+        } else if (e.key === 'Escape') {
+            close();
+        }
+    });
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+    });
+
+    // Global Cmd+P to open file picker in current editor.
+    // Capture to preempt Monaco quick-open.
+    window.addEventListener('keydown', (e) => {
+        const key = e.key.toLowerCase();
+        if ((e.ctrlKey || e.metaKey) && key === 'p') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            const activeTab = tabs.find(t => t.id === activeTabId);
+            if (activeTab && activeTab.isEditor && activeTab.openFile) {
+                window.openFilePicker((path) => {
+                    activeTab.openFile(path).catch(err => console.error(err));
+                });
+            } else {
+                // Open a new editor tab with file picker
+                const newTab = window.createEditorTab('Editor');
+                window.openFilePicker((path) => {
+                    newTab.openFile(path).catch(err => console.error(err));
+                });
+            }
+        }
+        // Cmd+S to save
+        if ((e.ctrlKey || e.metaKey) && key === 's') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            const activeTab = tabs.find(t => t.id === activeTabId);
+            if (activeTab && activeTab.isEditor && activeTab.saveFile) {
+                activeTab.saveFile().catch(err => console.error(err));
+            }
+        }
+    }, true);
+})();
+</script>
+
+<!-- Code Search Modal -->
+<div class="code-search-overlay" id="codeSearchOverlay">
+    <div class="code-search-modal">
+        <div class="code-search-header">
+            <input type="text" id="codeSearchInput" placeholder="Search in files..." autocomplete="off">
+            <label>
+                <input type="checkbox" id="codeSearchRegex">
+                Regex
+            </label>
+        </div>
+        <div class="code-search-results" id="codeSearchResults"></div>
+        <div class="code-search-hint">&#8593;&#8595; navigate &middot; Enter open &middot; Esc close</div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const searchApiUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/files/search`;
+    const overlay = document.getElementById('codeSearchOverlay');
+    const input = document.getElementById('codeSearchInput');
+    const regexCheckbox = document.getElementById('codeSearchRegex');
+    const resultsContainer = document.getElementById('codeSearchResults');
+    
+    let searchResults = [];
+    let selectedIndex = 0;
+    let debounceTimer = null;
+    
+    function open() {
+        overlay.classList.add('open');
+        input.value = '';
+        resultsContainer.innerHTML = '<div class="code-search-empty">Type to search...</div>';
+        searchResults = [];
+        selectedIndex = 0;
+        input.focus();
+    }
+    
+    function close() {
+        overlay.classList.remove('open');
+    }
+    
+    async function search(query) {
+        if (!query.trim()) {
+            resultsContainer.innerHTML = '<div class="code-search-empty">Type to search...</div>';
+            searchResults = [];
+            return;
+        }
+        
+        const useRegex = regexCheckbox.checked;
+        const url = `${searchApiUrl}?q=${encodeURIComponent(query)}${useRegex ? '&regex=true' : ''}`;
+        
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            searchResults = data.results || [];
+            render(data.truncated);
+        } catch (e) {
+            resultsContainer.innerHTML = '<div class="code-search-empty">Search failed</div>';
+            searchResults = [];
+        }
+    }
+    
+    function escapeHtml(text) {
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    
+    function render(truncated) {
+        if (searchResults.length === 0) {
+            resultsContainer.innerHTML = '<div class="code-search-empty">No results found</div>';
+            return;
+        }
+        
+        // Group results by file
+        const grouped = {};
+        searchResults.forEach((r, i) => {
+            if (!grouped[r.path]) {
+                grouped[r.path] = [];
+            }
+            grouped[r.path].push({ ...r, globalIndex: i });
+        });
+        
+        let html = '';
+        for (const [path, matches] of Object.entries(grouped)) {
+            html += `<div class="code-search-file-group">`;
+            html += `<div class="code-search-file-header">${escapeHtml(path)}</div>`;
+            for (const m of matches) {
+                const selected = m.globalIndex === selectedIndex ? ' selected' : '';
+                html += `<div class="code-search-match${selected}" data-index="${m.globalIndex}" data-path="${escapeHtml(m.path)}" data-line="${m.line_number}">`;
+                html += `<span class="code-search-line-num">${m.line_number}</span>`;
+                html += `<span class="code-search-line-content">${escapeHtml(m.content)}</span>`;
+                html += `</div>`;
+            }
+            html += `</div>`;
+        }
+        
+        if (truncated) {
+            html += `<div class="code-search-truncated">Results truncated - refine your search</div>`;
+        }
+        
+        resultsContainer.innerHTML = html;
+        
+        // Click handlers
+        resultsContainer.querySelectorAll('.code-search-match').forEach(el => {
+            el.addEventListener('click', () => {
+                openResult(el.dataset.path, parseInt(el.dataset.line, 10));
+            });
+        });
+        
+        // Scroll selected into view
+        const selectedEl = resultsContainer.querySelector('.selected');
+        if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest' });
+    }
+    
+    function navigate(dir) {
+        if (searchResults.length === 0) return;
+        selectedIndex = Math.max(0, Math.min(searchResults.length - 1, selectedIndex + dir));
+        render(false);
+    }
+    
+    function openResult(path, lineNumber) {
+        close();
+        
+        // Find or create an editor tab and open the file
+        let editorTab = tabs.find(t => t.isEditor);
+        if (!editorTab) {
+            editorTab = window.createEditorTab('Editor');
+        } else {
+            window.activateTab(editorTab.id);
+        }
+        
+        editorTab.openFile(path).then(() => {
+            // Jump to line after file loads
+            setTimeout(() => {
+                const activeTab = tabs.find(t => t.id === activeTabId);
+                if (activeTab && activeTab.isEditor) {
+                    // Access the editorInstance that was stored
+                    if (window.monaco) {
+                        const models = window.monaco.editor.getModels();
+                        const editors = window.monaco.editor.getEditors();
+                        if (editors && editors.length > 0) {
+                            const ed = editors[0];
+                            ed.setPosition({ lineNumber: lineNumber, column: 1 });
+                            ed.revealLineInCenter(lineNumber);
+                            ed.focus();
+                        }
+                    }
+                }
+            }, 200);
+        }).catch(err => console.error('Failed to open file:', err));
+    }
+    
+    function selectCurrent() {
+        if (searchResults.length === 0) return;
+        const result = searchResults[selectedIndex];
+        if (result) {
+            openResult(result.path, result.line_number);
+        }
+    }
+    
+    // Keyboard shortcut: Cmd+Shift+F
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'f') {
+            e.preventDefault();
+            open();
+        }
+        if (e.key === 'Escape' && overlay.classList.contains('open')) {
+            close();
+        }
+    });
+    
+    input.addEventListener('input', () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            selectedIndex = 0;
+            search(input.value);
+        }, 300);
+    });
+    
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            navigate(1);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            navigate(-1);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            selectCurrent();
+        }
+    });
+    
+    regexCheckbox.addEventListener('change', () => {
+        if (input.value.trim()) {
+            search(input.value);
+        }
+    });
+    
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+    });
+})();
+</script>
+</body>
+</html>

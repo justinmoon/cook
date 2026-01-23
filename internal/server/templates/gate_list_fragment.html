@@ -1,0 +1,12 @@
+{{if .GateRuns}}
+<div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+    {{range .GateRuns}}
+    <div style="display: flex; align-items: center; gap: 0.5rem;">
+        {{if eq .Status "passed"}}✅{{else if eq .Status "failed"}}❌{{else if eq .Status "running"}}🔄{{else}}⏳{{end}}
+        <span>{{.GateName}}</span>
+    </div>
+    {{end}}
+</div>
+{{else}}
+<p style="color: var(--pico-muted-color);">No gate runs yet.</p>
+{{end}}
