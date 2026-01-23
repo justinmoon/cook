@@ -4,7 +4,7 @@ Step-by-step plan to implement cook v1. Each step should be completable in a foc
 
 ## Spike Results (2026-01-20)
 
-All spikes passed. Code in `spikes/` directory.
+All spikes passed. Code in `docs/reference/spikes/` directory.
 
 1. **PTY to WebSocket to xterm.js** - Works. Uses `github.com/creack/pty` and `github.com/gorilla/websocket`.
 2. **Docker PTY via OrbStack** - Works. Uses `github.com/docker/docker` SDK v27. OrbStack provides Docker API at standard socket.
