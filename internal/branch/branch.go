@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/justinmoon/cook/internal/db"
+	"github.com/justinmoon/cook/internal/env"
 )
 
 type Branch struct {
@@ -38,6 +39,15 @@ func (b *Branch) TaskFullName() string {
 		return *b.TaskRepo + "/" + *b.TaskSlug
 	}
 	return ""
+}
+
+// Backend returns a Backend for this branch's environment.
+// Returns an error if the branch has no environment configured.
+func (b *Branch) Backend() (env.Backend, error) {
+	if b.Environment.Path == "" {
+		return nil, fmt.Errorf("branch has no checkout path")
+	}
+	return env.NewBackendFromPath(env.Type(b.Environment.Backend), b.Environment.Path)
 }
 
 type EnvironmentSpec struct {
