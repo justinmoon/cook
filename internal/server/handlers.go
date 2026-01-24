@@ -62,6 +62,10 @@ func (s *Server) getTemplateUser(r *http.Request) *TemplateUser {
 		user.DisplayName = profile.DisplayName()
 		user.Picture = profile.Picture
 	} else {
+		// Profile not cached, trigger async fetch for next time
+		go profileStore.FetchAndCache(pubkey, nil)
+	}
+	if user.DisplayName == "" {
 		user.DisplayName = auth.ShortPubkey(pubkey)
 	}
 

@@ -95,6 +95,12 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch and cache nostr profile (async, non-blocking)
+	go func() {
+		profileStore := auth.NewProfileStore(s.db)
+		profileStore.FetchAndCache(req.Event.PubKey, nil)
+	}()
+
 	// Set cookie (secure only if not localhost)
 	secure := !strings.HasPrefix(r.Host, "localhost") && !strings.HasPrefix(r.Host, "127.0.0.1")
 	auth.SetSessionCookie(w, session.ID, secure)
