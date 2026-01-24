@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -157,8 +158,10 @@ func (m *Middleware) validateNIP98(r *http.Request, authHeader string) (string, 
 func getSessionCookie(r *http.Request) string {
 	cookie, err := r.Cookie("cook_session")
 	if err != nil {
+		log.Printf("[AUTH DEBUG] No cook_session cookie found: %v", err)
 		return ""
 	}
+	log.Printf("[AUTH DEBUG] Found cook_session cookie: %s...", cookie.Value[:min(8, len(cookie.Value))])
 	return cookie.Value
 }
 

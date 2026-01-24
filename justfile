@@ -11,15 +11,15 @@ build-agent:
 build: setup build-agent
     go build ./cmd/cook
 
-# Development server with auto-reload
-dev: build-agent
-    (sleep 1 && open http://localhost:7420) &
-    air
+# Development server with auto-reload (default: no auth, no browser open)
+dev auth="none" open="false": build-agent
+    if [ "{{open}}" = "true" ]; then (sleep 1 && open http://localhost:7420) & fi
+    COOK_AUTH={{auth}} air
 
 # Development server without auto-reload
-dev-no-reload:
-    (sleep 1 && open http://localhost:7420) &
-    COOK_AUTH=nostr go run ./cmd/cook serve
+dev-no-reload auth="none" open="false":
+    if [ "{{open}}" = "true" ]; then (sleep 1 && open http://localhost:7420) & fi
+    COOK_AUTH={{auth}} go run ./cmd/cook serve
 
 # Run E2E tests
 test-e2e:
