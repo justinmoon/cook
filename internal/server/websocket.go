@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"github.com/justinmoon/cook/internal/agent"
 	"github.com/justinmoon/cook/internal/auth"
 	"github.com/justinmoon/cook/internal/branch"
+	"github.com/justinmoon/cook/internal/env"
 )
 
 var upgrader = websocket.Upgrader{
@@ -104,13 +106,21 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Create a shell PTY in the checkout directory
+		// Get backend to use its environment (isolated HOME, dotfiles, etc.)
+		backend, err := b.Backend()
+		if err != nil {
+			return nil, err
+		}
+		lb := backend.(*env.LocalBackend)
+
+		// Create a shell PTY using the backend's Command method (gets proper env with isolated HOME)
 		shells := []string{"/bin/zsh", "/bin/bash", "/bin/sh"}
 		for _, shell := range shells {
 			if _, err := os.Stat(shell); err == nil {
-				cmd := exec.Command(shell)
-				cmd.Dir = b.Environment.Path
-				cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+				cmd, err := lb.Command(context.Background(), shell, "-l")
+				if err != nil {
+					return nil, err
+				}
 				return cmd, nil
 			}
 		}

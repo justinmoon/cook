@@ -28,6 +28,20 @@
                 <label><input type="radio" name="agent" value="claude" checked> Claude</label>
                 <label><input type="radio" name="agent" value="codex"> Codex</label>
             </fieldset>
+            <label>
+                Dotfiles (optional)
+                <select name="dotfiles">
+                    {{if .Dotfiles}}
+                    {{range .Dotfiles}}
+                    <option value="{{.URL}}">{{.Name}}</option>
+                    {{end}}
+                    <option value="">-- None --</option>
+                    {{else}}
+                    <option value="">-- None --</option>
+                    {{end}}
+                </select>
+                <small><a href="/settings/dotfiles">Manage dotfiles</a></small>
+            </label>
             <button type="submit">Start with Agent</button>
         </form>
     </article>

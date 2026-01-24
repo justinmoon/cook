@@ -1,0 +1,54 @@
+{{template "base" .}}
+
+{{define "content"}}
+<h1>Manage Dotfiles</h1>
+
+<section>
+<h2>Add Dotfiles</h2>
+<form method="POST" action="/settings/dotfiles">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <div style="display: grid; grid-template-columns: 1fr 2fr auto; gap: 1rem; align-items: end;">
+        <label>
+            Name
+            <input type="text" name="name" placeholder="my-dotfiles" required>
+        </label>
+        <label>
+            Path or URL
+            <input type="text" name="url" placeholder="/path/to/dotfiles or https://github.com/..." required>
+        </label>
+        <button type="submit">Add</button>
+    </div>
+</form>
+</section>
+
+<section>
+<h2>Your Dotfiles</h2>
+{{if .Dotfiles}}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Path/URL</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Dotfiles}}
+        <tr>
+            <td>{{.Name}}</td>
+            <td><code>{{.URL}}</code></td>
+            <td>
+                <form method="POST" action="/settings/dotfiles/{{.Name}}/delete" style="margin: 0;">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                    <button type="submit" class="outline secondary" style="padding: 0.25rem 0.5rem;">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<p style="color: var(--pico-muted-color);">No dotfiles configured yet.</p>
+{{end}}
+</section>
+{{end}}
