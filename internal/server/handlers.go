@@ -700,8 +700,16 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 
 	agentType := r.FormValue("agent")
 	dotfiles := r.FormValue("dotfiles")
+	backendType := r.FormValue("backend")
+	if backendType == "" {
+		backendType = "local" // default to local
+	}
 	if agentType != "claude" && agentType != "codex" {
 		http.Error(w, "Invalid agent type", http.StatusBadRequest)
+		return
+	}
+	if backendType != "local" && backendType != "docker" {
+		http.Error(w, "Invalid backend type", http.StatusBadRequest)
 		return
 	}
 
@@ -744,9 +752,17 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 		TaskSlug: &slug,
 	}
 
-	if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	// Create with appropriate backend
+	if backendType == "docker" {
+		if err := branchStore.CreateWithDockerCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Write TASK.md with task description

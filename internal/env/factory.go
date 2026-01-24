@@ -8,7 +8,7 @@ func NewBackend(backendType Type, cfg Config) (Backend, error) {
 	case TypeLocal, "":
 		return NewLocalBackend(cfg), nil
 	case TypeDocker:
-		return nil, fmt.Errorf("docker backend not yet implemented")
+		return NewDockerBackend(cfg)
 	case TypeModal:
 		return nil, fmt.Errorf("modal backend not yet implemented")
 	default:
@@ -23,10 +23,17 @@ func NewBackendFromPath(backendType Type, workDir string) (Backend, error) {
 	case TypeLocal, "":
 		return NewLocalBackendFromPath(workDir), nil
 	case TypeDocker:
-		return nil, fmt.Errorf("docker backend not yet implemented")
+		// For Docker, we need the container ID to reconnect
+		// This path is used for existing environments, so we need to look up the container
+		return nil, fmt.Errorf("docker backend requires container ID for existing environments")
 	case TypeModal:
 		return nil, fmt.Errorf("modal backend not yet implemented")
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", backendType)
 	}
+}
+
+// NewDockerBackendFromContainerID creates a Docker backend from an existing container.
+func NewDockerBackendFromContainerID(containerID, hostWorkDir string) (Backend, error) {
+	return NewDockerBackendFromExisting(containerID, hostWorkDir)
 }

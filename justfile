@@ -3,12 +3,16 @@ setup:
     bun install
     bun run build:editor
 
+# Build cook-agent for Linux (runs inside Docker containers)
+build-agent:
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cook-agent ./cmd/cook-agent
+
 # Full build
-build: setup
+build: setup build-agent
     go build ./cmd/cook
 
 # Development server with auto-reload
-dev:
+dev: build-agent
     (sleep 1 && open http://localhost:7420) &
     air
 

@@ -614,6 +614,9 @@
             <dt>Status</dt>
             <dd class="{{.Branch.Status}}">{{.Branch.Status}}</dd>
             
+            <dt>Backend</dt>
+            <dd>{{if .Branch.Environment.Backend}}{{.Branch.Environment.Backend}}{{else}}local{{end}}{{if .Branch.Environment.ContainerID}} <code style="font-size: 0.8em;">({{.Branch.Environment.ContainerID}})</code>{{end}}</dd>
+            
             {{if .Branch.Environment.Path}}
             <dt>Checkout Path</dt>
             <dd><code>{{.Branch.Environment.Path}}</code></dd>
