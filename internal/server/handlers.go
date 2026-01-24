@@ -848,9 +848,23 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	// Write TASK.md with task description
 	taskMdContent := fmt.Sprintf("# %s\n\n%s\n", t.Title, t.Body)
 	taskMdPath := filepath.Join(b.Environment.Path, "TASK.md")
-	if err := os.WriteFile(taskMdPath, []byte(taskMdContent), 0644); err != nil {
-		http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
-		return
+	if backendType == "modal" || backendType == "docker" {
+		// For remote backends, write via the backend
+		backend, err := b.Backend()
+		if err != nil {
+			http.Error(w, "Failed to get backend: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := backend.WriteFile(r.Context(), taskMdPath, []byte(taskMdContent)); err != nil {
+			http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// For local backend, write directly
+		if err := os.WriteFile(taskMdPath, []byte(taskMdContent), 0644); err != nil {
+			http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Create agent session record
