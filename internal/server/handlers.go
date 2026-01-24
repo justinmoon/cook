@@ -782,7 +782,7 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent type", http.StatusBadRequest)
 		return
 	}
-	if backendType != "local" && backendType != "docker" {
+	if backendType != "local" && backendType != "docker" && backendType != "modal" {
 		http.Error(w, "Invalid backend type", http.StatusBadRequest)
 		return
 	}
