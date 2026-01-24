@@ -206,7 +206,7 @@ Agent types: claude, codex, opencode
 				}
 
 				// Spawn the agent process
-				agentCmd, err := agent.Spawn(agent.AgentType(agentType), env.Path, prompt)
+				agentCmd, err := agent.Spawn(agent.AgentType(agentType), env.Path, prompt, repoName, branchName)
 				if err != nil {
 					return fmt.Errorf("failed to spawn agent: %w", err)
 				}

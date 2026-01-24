@@ -6,7 +6,7 @@ import (
 )
 
 func TestSpawnClaude(t *testing.T) {
-	cmd, err := Spawn(AgentClaude, "/tmp", "test prompt")
+	cmd, err := Spawn(AgentClaude, "/tmp", "test prompt", "owner/repo", "test-branch")
 	if err != nil {
 		t.Fatalf("Failed to spawn claude: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestSpawnClaude(t *testing.T) {
 }
 
 func TestSpawnCodex(t *testing.T) {
-	cmd, err := Spawn(AgentCodex, "/tmp", "test prompt")
+	cmd, err := Spawn(AgentCodex, "/tmp", "test prompt", "owner/repo", "test-branch")
 	if err != nil {
 		t.Fatalf("Failed to spawn codex: %v", err)
 	}

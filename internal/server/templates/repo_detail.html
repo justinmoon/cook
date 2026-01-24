@@ -140,32 +140,6 @@
 </section>
 
 <section>
-<h2>Branches</h2>
-{{if .Branches}}
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Task</th>
-        </tr>
-    </thead>
-    <tbody>
-        {{range .Branches}}
-        <tr>
-            <td><a href="/branches/{{.Repo}}/{{.Name}}">{{.Name}}</a></td>
-            <td class="{{.Status}}">{{.Status}}</td>
-            <td>{{if .TaskSlug}}<a href="/tasks/{{.TaskRepo}}/{{.TaskSlug}}">{{.TaskSlug}}</a>{{end}}</td>
-        </tr>
-        {{end}}
-    </tbody>
-</table>
-{{else}}
-<p style="color: var(--pico-muted-color);">No branches yet.</p>
-{{end}}
-</section>
-
-<section>
 <h2>Commits</h2>
 {{if .Commits}}
 <table>

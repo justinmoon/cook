@@ -122,12 +122,20 @@
             </ul>
             <ul>
                 <li><a href="/repos">Repos</a></li>
-                <li><a href="/tasks">Tasks</a></li>
-                <li><a href="/branches">Branches</a></li>
                 {{if .User}}
-                <li><a href="/dashboard">Dashboard</a></li>
+                <li><a href="/new" role="button" class="outline">New</a></li>
+                <li><a href="/settings">Settings</a></li>
                 <li class="user-menu">
-                    <span class="user-name">{{.User.DisplayName}}</span>
+                    {{if .User.Picture}}
+                    <img src="{{.User.Picture}}" alt="avatar" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
+                    {{else}}
+                    <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--pico-muted-border-color); display: flex; align-items: center; justify-content: center;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                    </div>
+                    {{end}}
                     <a href="/logout" role="button" class="outline secondary">Logout</a>
                 </li>
                 {{else}}

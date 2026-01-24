@@ -11,13 +11,13 @@ build-agent:
 build: setup build-agent
     go build ./cmd/cook
 
-# Development server with auto-reload (default: no auth, no browser open)
-dev auth="none" open="false": build-agent
+# Development server with auto-reload (default: nostr auth, no browser open)
+dev auth="nostr" open="false": build-agent
     if [ "{{open}}" = "true" ]; then (sleep 1 && open http://localhost:7420) & fi
     COOK_AUTH={{auth}} air
 
 # Development server without auto-reload
-dev-no-reload auth="none" open="false":
+dev-no-reload auth="nostr" open="false":
     if [ "{{open}}" = "true" ]; then (sleep 1 && open http://localhost:7420) & fi
     COOK_AUTH={{auth}} go run ./cmd/cook serve
 

@@ -215,7 +215,8 @@ func scanSessionRows(rows *sql.Rows) (*Session, error) {
 
 // Spawn creates an agent command to run in the given checkout directory.
 // Commands are wrapped in a shell to avoid macOS PTY permission issues.
-func Spawn(agentType AgentType, checkoutPath, prompt string) (*exec.Cmd, error) {
+// repoRef is "owner/repo" and branchName is the branch name for environment variables.
+func Spawn(agentType AgentType, checkoutPath, prompt, repoRef, branchName string) (*exec.Cmd, error) {
 	var shellCmd string
 
 	switch agentType {
@@ -249,6 +250,8 @@ func Spawn(agentType AgentType, checkoutPath, prompt string) (*exec.Cmd, error) 
 	cmd.Dir = checkoutPath
 	cmd.Env = append(os.Environ(),
 		"COOK_BRANCH="+checkoutPath,
+		"COOK_BRANCH_REPO="+repoRef,
+		"COOK_BRANCH_NAME="+branchName,
 		"TERM=xterm-256color",
 	)
 
@@ -257,7 +260,7 @@ func Spawn(agentType AgentType, checkoutPath, prompt string) (*exec.Cmd, error) 
 
 // SpawnResume creates an agent command that resumes a previous session.
 // Uses --continue to resume the most recent session in the checkout directory.
-func SpawnResume(agentType AgentType, checkoutPath string) (*exec.Cmd, error) {
+func SpawnResume(agentType AgentType, checkoutPath, repoRef, branchName string) (*exec.Cmd, error) {
 	var shellCmd string
 
 	switch agentType {
@@ -276,6 +279,8 @@ func SpawnResume(agentType AgentType, checkoutPath string) (*exec.Cmd, error) {
 	cmd.Dir = checkoutPath
 	cmd.Env = append(os.Environ(),
 		"COOK_BRANCH="+checkoutPath,
+		"COOK_BRANCH_REPO="+repoRef,
+		"COOK_BRANCH_NAME="+branchName,
 		"TERM=xterm-256color",
 	)
 

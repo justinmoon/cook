@@ -19,10 +19,10 @@ func TestCSRFMiddleware_SkipsAuthEndpoints(t *testing.T) {
 		method     string
 		wantStatus int
 	}{
-		{"GET request passes", "/dashboard", "GET", http.StatusOK},
+		{"GET request passes", "/settings", "GET", http.StatusOK},
 		{"POST to /auth/verify skips CSRF", "/auth/verify", "POST", http.StatusOK},
 		{"POST to /auth/challenge skips CSRF", "/auth/challenge", "POST", http.StatusOK},
-		{"POST to /dashboard blocked without CSRF", "/dashboard", "POST", http.StatusForbidden},
+		{"POST to /settings blocked without CSRF", "/settings", "POST", http.StatusForbidden},
 		{"POST to /repos blocked without CSRF", "/repos/owner/name/tasks", "POST", http.StatusForbidden},
 	}
 
@@ -66,7 +66,7 @@ func TestCSRFMiddleware_ValidatesToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			body := "csrf_token=" + tt.formToken
-			req := httptest.NewRequest("POST", "/dashboard/repos", strings.NewReader(body))
+			req := httptest.NewRequest("POST", "/new", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 			if tt.cookieToken != "" {
@@ -93,7 +93,7 @@ func TestCSRFMiddleware_AcceptsHeaderToken(t *testing.T) {
 
 	token, _ := GenerateCSRFToken()
 
-	req := httptest.NewRequest("POST", "/dashboard/repos", nil)
+	req := httptest.NewRequest("POST", "/new", nil)
 	req.Header.Set(CSRFHeaderName, token)
 	req.AddCookie(&http.Cookie{
 		Name:  CSRFCookieName,

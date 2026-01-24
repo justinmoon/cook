@@ -21,7 +21,7 @@ func TestAgentCreatesFile(t *testing.T) {
 
 	mgr := terminal.NewManager()
 
-	cmd, err := agent.Spawn(agent.AgentClaude, tmpDir, "create a file called hello.txt with content 'test passed' then exit")
+	cmd, err := agent.Spawn(agent.AgentClaude, tmpDir, "create a file called hello.txt with content 'test passed' then exit", "test/repo", "test-branch")
 	if err != nil {
 		t.Fatalf("Failed to spawn: %v", err)
 	}

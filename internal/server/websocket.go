@@ -114,7 +114,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			if agentSession != nil {
 				// Resume the agent session instead of creating a shell
 				log.Printf("Resuming agent session for %s (type: %s)", sessionKey, agentSession.AgentType)
-				return agent.SpawnResume(agentSession.AgentType, b.Environment.Path)
+				return agent.SpawnResume(agentSession.AgentType, b.Environment.Path, repoRef, branchName)
 			}
 		}
 

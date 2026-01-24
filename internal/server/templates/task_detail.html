@@ -1,7 +1,73 @@
 {{template "base" .}}
 
 {{define "content"}}
-<h1>{{.Task.Title}}</h1>
+<div style="display: flex; justify-content: space-between; align-items: center;">
+    <h1>{{.Task.Title}}</h1>
+    {{if .IsOwner}}
+    <div style="display: flex; gap: 0.5rem;">
+        <button class="outline" onclick="document.getElementById('edit-task').showModal()">Edit</button>
+        <button class="outline secondary" onclick="document.getElementById('delete-task').showModal()">Delete</button>
+    </div>
+    {{end}}
+</div>
+
+{{if .IsOwner}}
+<dialog id="edit-task">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('edit-task').close()"></button>
+            <h3>Edit Task</h3>
+        </header>
+        <form method="POST" action="/tasks/{{.Task.Repo}}/{{.Task.Slug}}/edit">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <label>
+                Title
+                <input type="text" name="title" value="{{.Task.Title}}" required>
+            </label>
+            <label>
+                Description
+                <textarea name="body" rows="4">{{.Task.Body}}</textarea>
+            </label>
+            <label>
+                Priority
+                <select name="priority">
+                    <option value="0" {{if eq .Task.Priority 0}}selected{{end}}>P0 - Critical</option>
+                    <option value="1" {{if eq .Task.Priority 1}}selected{{end}}>P1 - High</option>
+                    <option value="2" {{if eq .Task.Priority 2}}selected{{end}}>P2 - Medium</option>
+                    <option value="3" {{if eq .Task.Priority 3}}selected{{end}}>P3 - Low</option>
+                </select>
+            </label>
+            <label>
+                Status
+                <select name="status">
+                    <option value="open" {{if eq .Task.Status "open"}}selected{{end}}>Open</option>
+                    <option value="in_progress" {{if eq .Task.Status "in_progress"}}selected{{end}}>In Progress</option>
+                    <option value="closed" {{if eq .Task.Status "closed"}}selected{{end}}>Closed</option>
+                    <option value="abandoned" {{if eq .Task.Status "abandoned"}}selected{{end}}>Abandoned</option>
+                </select>
+            </label>
+            <button type="submit">Save Changes</button>
+        </form>
+    </article>
+</dialog>
+
+<dialog id="delete-task">
+    <article>
+        <header>
+            <button aria-label="Close" rel="prev" onclick="document.getElementById('delete-task').close()"></button>
+            <h3>Delete Task</h3>
+        </header>
+        <p>Are you sure you want to delete this task? This cannot be undone.</p>
+        <form method="POST" action="/tasks/{{.Task.Repo}}/{{.Task.Slug}}/delete">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                <button type="button" class="secondary" onclick="document.getElementById('delete-task').close()">Cancel</button>
+                <button type="submit" class="contrast">Delete Task</button>
+            </div>
+        </form>
+    </article>
+</dialog>
+{{end}}
 
 {{if .LinkedBranch}}
 <div style="display: flex; gap: 1rem; align-items: center;">

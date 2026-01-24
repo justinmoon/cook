@@ -50,9 +50,13 @@ func NewMiddleware(sessionStore *SessionStore, enabled bool, allowedPubkeys []st
 		publicPaths: []string{
 			"/health",
 			"/login",
+			"/logout",
 			"/auth/challenge",
 			"/auth/verify",
 			"/static/",
+			"/repos",
+			"/branches/",
+			"/tasks/",
 		},
 	}
 }
@@ -67,10 +71,11 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		}
 
 		// Check if path is public
+		isPublic := false
 		for _, path := range m.publicPaths {
 			if strings.HasPrefix(r.URL.Path, path) {
-				next.ServeHTTP(w, r)
-				return
+				isPublic = true
+				break
 			}
 		}
 
@@ -100,6 +105,10 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		}
 
 		if sessionID == "" {
+			if isPublic {
+				next.ServeHTTP(w, r)
+				return
+			}
 			redirectToLogin(w, r)
 			return
 		}
@@ -107,6 +116,10 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		// Validate session
 		session, err := m.sessionStore.Validate(sessionID)
 		if err != nil || session == nil {
+			if isPublic {
+				next.ServeHTTP(w, r)
+				return
+			}
 			redirectToLogin(w, r)
 			return
 		}

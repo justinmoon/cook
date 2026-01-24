@@ -1,0 +1,70 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>Settings</h1>
+
+<section>
+    <h2>SSH Keys</h2>
+    {{if not .User.HasSSHKeys}}
+    <article style="background: var(--pico-mark-background-color); padding: 1rem; border-radius: var(--pico-border-radius);">
+        <p><strong>Add an SSH key to get started.</strong></p>
+        <p>You need at least one SSH key to create repositories and push code.</p>
+    </article>
+    {{end}}
+
+    {{if .SSHKeys}}
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Fingerprint</th>
+                <th>Added</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .SSHKeys}}
+            <tr>
+                <td>{{if .Name}}{{.Name}}{{else}}<em>unnamed</em>{{end}}</td>
+                <td><code style="font-size: 0.75rem;">{{.Fingerprint}}</code></td>
+                <td>{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+                <td>
+                    <form method="POST" action="/settings/ssh-keys/delete" style="margin: 0;">
+                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                        <input type="hidden" name="fingerprint" value="{{.Fingerprint}}">
+                        <button type="submit" class="outline secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{end}}
+
+    <details {{if not .User.HasSSHKeys}}open{{end}}>
+        <summary>Add SSH Key</summary>
+        <form id="ssh-key-form" method="POST" action="/settings/ssh-keys">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <label>
+                Public Key
+                <textarea
+                    name="key"
+                    placeholder="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... or ssh-rsa AAAAB3NzaC1yc2E..."
+                    rows="3"
+                    required></textarea>
+                <small>Paste your SSH public key (usually from ~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub)</small>
+            </label>
+            <label>
+                Name (optional)
+                <input type="text" name="name" placeholder="e.g., MacBook Pro">
+            </label>
+            {{if .SSHKeyError}}<p style="color: var(--pico-del-color);">{{.SSHKeyError}}</p>{{end}}
+            <button type="submit">Add SSH Key</button>
+        </form>
+    </details>
+</section>
+
+<section>
+    <h2>Dotfiles</h2>
+    <p><a href="/settings/dotfiles">Manage dotfiles</a></p>
+</section>
+{{end}}

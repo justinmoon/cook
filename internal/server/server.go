@@ -94,10 +94,11 @@ func (s *Server) setupRoutes() {
 
 	// HTML pages
 	s.router.Get("/", s.handleIndex)
-	s.router.Get("/dashboard", s.handleDashboard)
-	s.router.Post("/dashboard/ssh-keys", s.handleDashboardSSHKeyAdd)
-	s.router.Post("/dashboard/ssh-keys/delete", s.handleDashboardSSHKeyDelete)
-	s.router.Post("/dashboard/repos", s.handleDashboardRepoCreate)
+	s.router.Get("/new", s.handleNewRepo)
+	s.router.Post("/new", s.handleNewRepoCreate)
+	s.router.Get("/settings", s.handleSettings)
+	s.router.Post("/settings/ssh-keys", s.handleSettingsSSHKeyAdd)
+	s.router.Post("/settings/ssh-keys/delete", s.handleSettingsSSHKeyDelete)
 	s.router.Get("/settings/dotfiles", s.handleSettingsDotfiles)
 	s.router.Post("/settings/dotfiles", s.handleSettingsDotfilesAdd)
 	s.router.Post("/settings/dotfiles/{name}/delete", s.handleSettingsDotfilesDelete)
@@ -105,10 +106,10 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/repos/{owner}/{repo}", s.handleRepoDetail)
 	s.router.Post("/repos/{owner}/{repo}/tasks", s.handleRepoTaskCreate)
 	s.router.Post("/repos/{owner}/{repo}/branches", s.handleRepoBranchCreate)
-	s.router.Get("/tasks", s.handleTaskList)
 	s.router.Get("/tasks/{owner}/{repo}/{slug}", s.handleTaskDetail)
+	s.router.Post("/tasks/{owner}/{repo}/{slug}/edit", s.handleTaskEdit)
+	s.router.Post("/tasks/{owner}/{repo}/{slug}/delete", s.handleTaskDelete)
 	s.router.Post("/tasks/{owner}/{repo}/{slug}/start", s.handleTaskStartBranch)
-	s.router.Get("/branches", s.handleBranchList)
 	s.router.Get("/branches/{owner}/{repo}/{name}", s.handleBranchDetail)
 	s.router.Post("/branches/{owner}/{repo}/{name}/gates/run", s.handleBranchRunGates)
 	s.router.Post("/branches/{owner}/{repo}/{name}/merge", s.handleBranchMerge)
@@ -161,6 +162,9 @@ func (s *Server) setupRoutes() {
 		r.Get("/ssh-keys", s.apiSSHKeyList)
 		r.Post("/ssh-keys", s.apiSSHKeyAdd)
 		r.Delete("/ssh-keys/{fingerprint}", s.apiSSHKeyDelete)
+
+		// Branch preview control
+		r.Post("/branches/{owner}/{repo}/{name}/preview", s.apiBranchPreviewNavigate)
 	})
 
 	// SSE endpoint for real-time updates

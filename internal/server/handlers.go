@@ -34,6 +34,7 @@ type TemplateUser struct {
 	Npub        string
 	ShortPubkey string
 	DisplayName string
+	Picture     string
 	HasSSHKeys  bool
 }
 
@@ -54,9 +55,15 @@ func (s *Server) getTemplateUser(r *http.Request) *TemplateUser {
 		user.Npub = npub
 	}
 
-	// Get display name from profile cache
+	// Get display name and picture from profile cache
 	profileStore := auth.NewProfileStore(s.db)
-	user.DisplayName = profileStore.DisplayNameForPubkey(pubkey)
+	profile, _ := profileStore.Get(pubkey)
+	if profile != nil {
+		user.DisplayName = profile.DisplayName()
+		user.Picture = profile.Picture
+	} else {
+		user.DisplayName = auth.ShortPubkey(pubkey)
+	}
 
 	// Check if user has SSH keys
 	sshKeyStore := auth.NewSSHKeyStore(s.db, s.cfg.Server.DataDir)
@@ -103,12 +110,11 @@ func init() {
 
 	// List of page templates that use the base template
 	pages := []string{
-		"dashboard.html",
 		"repos.html",
 		"repo_detail.html",
-		"tasks.html",
 		"task_detail.html",
-		"branches.html",
+		"new_repo.html",
+		"settings.html",
 		"settings_dotfiles.html",
 	}
 
@@ -219,64 +225,28 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/repos", http.StatusTemporaryRedirect)
 }
 
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	s.renderDashboard(w, r, "", "")
-}
-
-func (s *Server) renderDashboard(w http.ResponseWriter, r *http.Request, sshKeyError, repoError string) {
+func (s *Server) handleNewRepo(w http.ResponseWriter, r *http.Request) {
 	pubkey := auth.GetPubkey(r.Context())
 	if pubkey == "" {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
 
-	// Get user's SSH keys
+	// Check if user has SSH keys
 	sshKeyStore := auth.NewSSHKeyStore(s.db, s.cfg.Server.DataDir)
-	sshKeys, err := sshKeyStore.List(pubkey)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	keys, _ := sshKeyStore.List(pubkey)
+	if len(keys) == 0 {
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
 		return
 	}
 
-	// Get user's repos
-	repoStore := repo.NewStore(s.cfg.Server.DataDir)
-	repos, err := repoStore.List(pubkey)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Get user's tasks
-	taskStore := task.NewStore(s.db)
-	tasks, err := taskStore.List("", "") // All tasks for now
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Filter to user's repos
-	var userTasks []task.Task
-	for _, t := range tasks {
-		owner, _, _ := repo.ParseRepoRef(t.Repo)
-		if owner == pubkey {
-			userTasks = append(userTasks, t)
-		}
-	}
-
-	data := s.baseTemplateData(r, "Dashboard")
-	data["SSHKeys"] = sshKeys
-	data["Repos"] = repos
-	data["Tasks"] = userTasks
-	data["RepoCount"] = len(repos)
-	data["TaskCount"] = len(userTasks)
-	data["SSHKeyError"] = sshKeyError
-	data["RepoError"] = repoError
-
-	if err := renderTemplate(w, "dashboard.html", data); err != nil {
+	data := s.baseTemplateData(r, "New Repository")
+	if err := renderTemplate(w, "new_repo.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) handleDashboardSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleNewRepoCreate(w http.ResponseWriter, r *http.Request) {
 	pubkey := auth.GetPubkey(r.Context())
 	if pubkey == "" {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -284,63 +254,9 @@ func (s *Server) handleDashboardSSHKeyAdd(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := r.ParseForm(); err != nil {
-		s.renderDashboard(w, r, "Invalid form data", "")
-		return
-	}
-
-	key := r.FormValue("key")
-	name := r.FormValue("name")
-
-	if key == "" {
-		s.renderDashboard(w, r, "SSH key is required", "")
-		return
-	}
-
-	store := auth.NewSSHKeyStore(s.db, s.cfg.Server.DataDir)
-	if _, err := store.Add(pubkey, key, name); err != nil {
-		s.renderDashboard(w, r, err.Error(), "")
-		return
-	}
-
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
-}
-
-func (s *Server) handleDashboardSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
-	pubkey := auth.GetPubkey(r.Context())
-	if pubkey == "" {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		s.renderDashboard(w, r, "Invalid form data", "")
-		return
-	}
-
-	fingerprint := r.FormValue("fingerprint")
-	if fingerprint == "" {
-		s.renderDashboard(w, r, "Fingerprint is required", "")
-		return
-	}
-
-	store := auth.NewSSHKeyStore(s.db, s.cfg.Server.DataDir)
-	if err := store.Remove(pubkey, fingerprint); err != nil {
-		s.renderDashboard(w, r, err.Error(), "")
-		return
-	}
-
-	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
-}
-
-func (s *Server) handleDashboardRepoCreate(w http.ResponseWriter, r *http.Request) {
-	pubkey := auth.GetPubkey(r.Context())
-	if pubkey == "" {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		s.renderDashboard(w, r, "", "Invalid form data")
+		data := s.baseTemplateData(r, "New Repository")
+		data["Error"] = "Invalid form data"
+		renderTemplate(w, "new_repo.html", data)
 		return
 	}
 
@@ -348,7 +264,9 @@ func (s *Server) handleDashboardRepoCreate(w http.ResponseWriter, r *http.Reques
 	url := r.FormValue("url")
 
 	if name == "" {
-		s.renderDashboard(w, r, "", "Repository name is required")
+		data := s.baseTemplateData(r, "New Repository")
+		data["Error"] = "Repository name is required"
+		renderTemplate(w, "new_repo.html", data)
 		return
 	}
 
@@ -363,12 +281,96 @@ func (s *Server) handleDashboardRepoCreate(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err != nil {
-		s.renderDashboard(w, r, "", err.Error())
+		data := s.baseTemplateData(r, "New Repository")
+		data["Error"] = err.Error()
+		renderTemplate(w, "new_repo.html", data)
 		return
 	}
 
-	// Redirect to the new repo
 	http.Redirect(w, r, "/repos/"+rp.Owner+"/"+rp.Name, http.StatusSeeOther)
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	s.renderSettings(w, r, "")
+}
+
+func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, sshKeyError string) {
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	sshKeyStore := auth.NewSSHKeyStore(s.db, s.cfg.Server.DataDir)
+	sshKeys, err := sshKeyStore.List(pubkey)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := s.baseTemplateData(r, "Settings")
+	data["SSHKeys"] = sshKeys
+	data["SSHKeyError"] = sshKeyError
+
+	if err := renderTemplate(w, "settings.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleSettingsSSHKeyAdd(w http.ResponseWriter, r *http.Request) {
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		s.renderSettings(w, r, "Invalid form data")
+		return
+	}
+
+	key := r.FormValue("key")
+	name := r.FormValue("name")
+
+	if key == "" {
+		s.renderSettings(w, r, "SSH key is required")
+		return
+	}
+
+	store := auth.NewSSHKeyStore(s.db, s.cfg.Server.DataDir)
+	if _, err := store.Add(pubkey, key, name); err != nil {
+		s.renderSettings(w, r, err.Error())
+		return
+	}
+
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
+}
+
+func (s *Server) handleSettingsSSHKeyDelete(w http.ResponseWriter, r *http.Request) {
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		s.renderSettings(w, r, "Invalid form data")
+		return
+	}
+
+	fingerprint := r.FormValue("fingerprint")
+	if fingerprint == "" {
+		s.renderSettings(w, r, "Fingerprint is required")
+		return
+	}
+
+	store := auth.NewSSHKeyStore(s.db, s.cfg.Server.DataDir)
+	if err := store.Remove(pubkey, fingerprint); err != nil {
+		s.renderSettings(w, r, err.Error())
+		return
+	}
+
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 func (s *Server) handleSettingsDotfiles(w http.ResponseWriter, r *http.Request) {
@@ -612,27 +614,6 @@ func (s *Server) handleRepoDetail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleTaskList(w http.ResponseWriter, r *http.Request) {
-	repoFilter := r.URL.Query().Get("repo")
-	statusFilter := r.URL.Query().Get("status")
-
-	store := task.NewStore(s.db)
-	tasks, err := store.List(repoFilter, statusFilter)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data := s.baseTemplateData(r, "Tasks")
-	data["Tasks"] = tasks
-	data["Repo"] = repoFilter
-	data["Status"] = statusFilter
-
-	if err := renderTemplate(w, "tasks.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
 func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
@@ -678,6 +659,85 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 	if err := renderTemplate(w, "task_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) handleTaskEdit(w http.ResponseWriter, r *http.Request) {
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	slug := chi.URLParam(r, "slug")
+	repoRef := owner + "/" + repoName
+
+	// Check ownership
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" || pubkey != owner {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	title := r.FormValue("title")
+	body := r.FormValue("body")
+	priorityStr := r.FormValue("priority")
+	status := r.FormValue("status")
+
+	if title == "" {
+		http.Error(w, "Title is required", http.StatusBadRequest)
+		return
+	}
+
+	priority := 2 // default
+	if priorityStr != "" {
+		fmt.Sscanf(priorityStr, "%d", &priority)
+	}
+
+	store := task.NewStore(s.db)
+	t, err := store.Get(repoRef, slug)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if t == nil {
+		http.Error(w, "Task not found", http.StatusNotFound)
+		return
+	}
+
+	t.Title = title
+	t.Body = body
+	t.Priority = priority
+	t.Status = status
+
+	if err := store.Update(t); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/tasks/"+owner+"/"+repoName+"/"+slug, http.StatusSeeOther)
+}
+
+func (s *Server) handleTaskDelete(w http.ResponseWriter, r *http.Request) {
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	slug := chi.URLParam(r, "slug")
+	repoRef := owner + "/" + repoName
+
+	// Check ownership
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" || pubkey != owner {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	store := task.NewStore(s.db)
+	if err := store.Delete(repoRef, slug); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/repos/"+owner+"/"+repoName, http.StatusSeeOther)
 }
 
 func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
@@ -787,7 +847,7 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the agent command
-	cmd, err := agent.Spawn(session.AgentType, b.Environment.Path, session.Prompt)
+	cmd, err := agent.Spawn(session.AgentType, b.Environment.Path, session.Prompt, repoRef, slug)
 	if err != nil {
 		log.Printf("Failed to create agent command: %v", err)
 		http.Error(w, "Failed to create agent command: "+err.Error(), http.StatusInternalServerError)
@@ -819,27 +879,6 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to branch page
 	http.Redirect(w, r, "/branches/"+owner+"/"+repoName+"/"+slug, http.StatusSeeOther)
-}
-
-func (s *Server) handleBranchList(w http.ResponseWriter, r *http.Request) {
-	repoFilter := r.URL.Query().Get("repo")
-	statusFilter := r.URL.Query().Get("status")
-
-	store := branch.NewStore(s.db, s.cfg.Server.DataDir)
-	branches, err := store.List(repoFilter, statusFilter)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data := s.baseTemplateData(r, "Branches")
-	data["Branches"] = branches
-	data["Repo"] = repoFilter
-	data["Status"] = statusFilter
-
-	if err := renderTemplate(w, "branches.html", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }
 
 func (s *Server) handleBranchDetail(w http.ResponseWriter, r *http.Request) {
@@ -2106,8 +2145,18 @@ func getRepoCommits(repoPath, ref string, limit int) ([]Commit, error) {
 
 // API handlers for Datastar
 func (s *Server) apiTaskList(w http.ResponseWriter, r *http.Request) {
-	// For now, just redirect to regular task list with SSE-compatible response
-	s.handleTaskList(w, r)
+	repoFilter := r.URL.Query().Get("repo")
+	statusFilter := r.URL.Query().Get("status")
+
+	store := task.NewStore(s.db)
+	tasks, err := store.List(repoFilter, statusFilter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tasks)
 }
 
 func (s *Server) apiTaskCreate(w http.ResponseWriter, r *http.Request) {
@@ -2148,7 +2197,18 @@ func (s *Server) apiTaskCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiBranchList(w http.ResponseWriter, r *http.Request) {
-	s.handleBranchList(w, r)
+	repoFilter := r.URL.Query().Get("repo")
+	statusFilter := r.URL.Query().Get("status")
+
+	store := branch.NewStore(s.db, s.cfg.Server.DataDir)
+	branches, err := store.List(repoFilter, statusFilter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(branches)
 }
 
 func (s *Server) apiActiveBranches(w http.ResponseWriter, r *http.Request) {
@@ -2286,6 +2346,40 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) apiBranchPreviewNavigate(w http.ResponseWriter, r *http.Request) {
+	owner := chi.URLParam(r, "owner")
+	repoName := chi.URLParam(r, "repo")
+	branchName := chi.URLParam(r, "name")
+	repoRef := owner + "/" + repoName
+
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.URL == "" {
+		http.Error(w, "URL is required", http.StatusBadRequest)
+		return
+	}
+
+	// Publish event to SSE subscribers
+	if s.eventBus.IsActive() {
+		s.eventBus.Publish(events.Event{
+			Type:   "preview_navigate",
+			Repo:   repoRef,
+			Branch: branchName,
+			Data: map[string]interface{}{
+				"url": req.URL,
+			},
+		})
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleBranchSSE(w http.ResponseWriter, r *http.Request) {

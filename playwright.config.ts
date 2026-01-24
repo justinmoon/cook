@@ -34,7 +34,7 @@ export default defineConfig({
   webServer: {
     command: "rm -rf /tmp/cook-e2e-test && COOK_DATA_DIR=/tmp/cook-e2e-test COOK_AUTH=nostr go run ./cmd/cook serve",
     url: BASE_URL,
-    reuseExistingServer: false, // Always start fresh for reproducible tests
+    reuseExistingServer: !process.env.CI, // Reuse existing server in dev
     timeout: 60000,
     stdout: "pipe",
     stderr: "pipe",

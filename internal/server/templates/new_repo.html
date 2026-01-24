@@ -1,0 +1,24 @@
+{{template "base" .}}
+{{define "content"}}
+<h1>Create a new repository</h1>
+
+<form method="POST" action="/new" style="max-width: 600px;">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    
+    <label>
+        Repository name
+        <input type="text" name="name" placeholder="my-project" required pattern="[a-zA-Z0-9_-]+" autofocus>
+        <small>Letters, numbers, hyphens, and underscores only</small>
+    </label>
+    
+    <label>
+        Clone URL (optional)
+        <input type="url" name="url" placeholder="https://github.com/user/repo.git">
+        <small>Import an existing repository</small>
+    </label>
+    
+    {{if .Error}}<p style="color: var(--pico-del-color);">{{.Error}}</p>{{end}}
+    
+    <button type="submit">Create repository</button>
+</form>
+{{end}}

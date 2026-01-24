@@ -112,6 +112,7 @@ func main() {
 	rootCmd.AddCommand(newLoginCmd())
 	rootCmd.AddCommand(newLogoutCmd())
 	rootCmd.AddCommand(newWhoamiCmd())
+	rootCmd.AddCommand(newPreviewCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

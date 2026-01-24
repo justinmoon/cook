@@ -1052,7 +1052,7 @@ let tabCounter = 0;
             updateNavButtons();
         }
         
-        const tab = { id, name, tabEl, panelEl, isPreview: true, urlInput, iframe, history, historyIndex, goBack, goForward, refresh };
+        const tab = { id, name, tabEl, panelEl, isPreview: true, urlInput, iframe, history, historyIndex, goBack, goForward, refresh, navigate };
         tabs.push(tab);
         
         // Tab click handler
@@ -1069,6 +1069,7 @@ let tabCounter = 0;
         
         return tab;
     }
+    window.createPreviewTab = createPreviewTab;
 
     let editorBundlePromise = null;
     function loadEditorBundle() {
@@ -1214,8 +1215,12 @@ let tabCounter = 0;
         }
         
         async function openFile(relPath) {
+            console.log('[openFile] Called with:', relPath);
             relPath = (relPath || '').trim().replace(/^\/+/, '');
-            if (!relPath) return;
+            if (!relPath) {
+                console.log('[openFile] Empty path, returning');
+                return;
+            }
             currentPath = relPath;
             
             const res = await fetch(`${fileApiUrl}?path=${encodeURIComponent(relPath)}`);
@@ -1480,6 +1485,39 @@ let tabCounter = 0;
     }
     
     init();
+    
+    // SSE listener for preview navigation commands from CLI
+    const sseUrl = `/events/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}`;
+    const eventSource = new EventSource(sseUrl);
+    
+    eventSource.addEventListener('preview_navigate', (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            if (data.data && data.data.url) {
+                console.log('[SSE] preview_navigate:', data.data.url);
+                // Find or create a preview tab and navigate to the URL
+                let previewTab = tabs.find(t => t.isPreview);
+                if (!previewTab) {
+                    previewTab = window.createPreviewTab('Preview');
+                }
+                if (previewTab && previewTab.navigate) {
+                    previewTab.navigate(data.data.url);
+                    window.activateTab(previewTab.id);
+                }
+            }
+        } catch (err) {
+            console.error('[SSE] Failed to handle preview_navigate:', err);
+        }
+    });
+    
+    eventSource.onerror = (e) => {
+        console.log('[SSE] Connection error, will retry...');
+    };
+    
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+        eventSource.close();
+    });
 })();
 </script>
 
@@ -1701,8 +1739,11 @@ let tabCounter = 0;
 
     function selectCurrent() {
         const items = results.querySelectorAll('.cmd-palette-item');
+        console.log('[FilePicker] selectCurrent called, items:', items.length, 'selectedIndex:', selectedIndex, 'hasCallback:', !!onSelectCallback);
         if (items[selectedIndex] && onSelectCallback) {
-            onSelectCallback(items[selectedIndex].dataset.path);
+            const path = items[selectedIndex].dataset.path;
+            console.log('[FilePicker] Calling callback with path:', path);
+            onSelectCallback(path);
             close();
         }
     }
@@ -1739,15 +1780,21 @@ let tabCounter = 0;
             e.preventDefault();
             e.stopImmediatePropagation();
             const activeTab = tabs.find(t => t.id === activeTabId);
+            console.log('[Cmd+P] activeTab:', activeTab, 'activeTabId:', activeTabId, 'tabs:', tabs.length);
             if (activeTab && activeTab.isEditor && activeTab.openFile) {
+                console.log('[Cmd+P] Using active editor tab');
                 window.openFilePicker((path) => {
-                    activeTab.openFile(path).catch(err => console.error(err));
+                    console.log('[Cmd+P] Opening file in active tab:', path);
+                    activeTab.openFile(path).catch(err => console.error('[Cmd+P] Error:', err));
                 });
             } else {
                 // Open a new editor tab with file picker
+                console.log('[Cmd+P] Creating new editor tab');
                 const newTab = window.createEditorTab('Editor');
+                console.log('[Cmd+P] New tab created:', newTab, 'has openFile:', !!newTab.openFile);
                 window.openFilePicker((path) => {
-                    newTab.openFile(path).catch(err => console.error(err));
+                    console.log('[Cmd+P] Opening file in new tab:', path);
+                    newTab.openFile(path).catch(err => console.error('[Cmd+P] Error:', err));
                 });
             }
         }

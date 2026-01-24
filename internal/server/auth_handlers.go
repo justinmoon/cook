@@ -10,9 +10,9 @@ import (
 )
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	// If already authenticated, redirect to dashboard
+	// If already authenticated, redirect to repos
 	if session := auth.GetSession(r.Context()); session != nil {
-		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		http.Redirect(w, r, "/repos", http.StatusSeeOther)
 		return
 	}
 
@@ -249,7 +249,7 @@ const loginPageHTML = `<!DOCTYPE html>
         if (!verifyRes.ok) throw new Error(result.error || 'Authentication failed');
 
         status.textContent = 'Success! Redirecting...';
-        setTimeout(() => window.location.href = '/dashboard', 500);
+        setTimeout(() => window.location.href = '/repos', 500);
       } catch (error) {
         console.error('Login error:', error);
         status.textContent = 'Error: ' + error.message;
