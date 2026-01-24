@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/justinmoon/cook/internal/envagent"
 )
 
 func TestModalBackend_Integration(t *testing.T) {
@@ -77,6 +79,47 @@ func TestModalBackend_Integration(t *testing.T) {
 		t.Fatalf("Status failed: %v", err)
 	}
 	t.Logf("Status: %+v", status)
+
+	// Test WebSocket terminal connection
+	t.Log("Testing WebSocket terminal connection...")
+	agentAddr := backend.AgentAddr()
+	t.Logf("Agent address: %s", agentAddr)
+
+	// Connect via envagent client
+	client, err := envagent.Dial(agentAddr)
+	if err != nil {
+		t.Fatalf("Failed to connect to cook-agent via WebSocket: %v", err)
+	}
+	defer client.Close()
+
+	// Create a terminal session
+	sessionID := "test-session-1"
+	if err := client.CreateSession(sessionID, "/bin/sh", "/workspace"); err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	t.Log("Terminal session created successfully!")
+
+	// Set up output handler
+	var lastOutput []byte
+	client.SetOutputHandler(func(sid string, data []byte) {
+		lastOutput = append(lastOutput, data...)
+	})
+
+	// Start read loop in goroutine
+	go client.ReadLoop()
+
+	// Send a command
+	if err := client.SendInput(sessionID, []byte("echo TERMINAL_TEST_OK\n")); err != nil {
+		t.Fatalf("Failed to send input: %v", err)
+	}
+
+	// Wait for output
+	time.Sleep(2 * time.Second)
+
+	t.Logf("Terminal output received: %d bytes", len(lastOutput))
+	if len(lastOutput) > 0 {
+		t.Logf("Output: %s", string(lastOutput))
+	}
 
 	t.Log("Modal backend test passed!")
 }
