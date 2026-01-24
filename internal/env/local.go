@@ -13,15 +13,21 @@ import (
 type LocalBackend struct {
 	config  Config
 	workDir string
+	homeDir string // isolated HOME directory for this environment
 }
 
 // NewLocalBackend creates a new local backend with the given config.
 // If config.WorkDir is set, it will be used directly.
 // Otherwise, Setup() must be called to clone and configure the environment.
 func NewLocalBackend(cfg Config) *LocalBackend {
+	homeDir := ""
+	if cfg.WorkDir != "" {
+		homeDir = filepath.Join(cfg.WorkDir, ".home")
+	}
 	return &LocalBackend{
 		config:  cfg,
 		workDir: cfg.WorkDir,
+		homeDir: homeDir,
 	}
 }
 
@@ -30,7 +36,13 @@ func NewLocalBackend(cfg Config) *LocalBackend {
 func NewLocalBackendFromPath(workDir string) *LocalBackend {
 	return &LocalBackend{
 		workDir: workDir,
+		homeDir: filepath.Join(workDir, ".home"),
 	}
+}
+
+// HomeDir returns the isolated HOME directory for this environment.
+func (b *LocalBackend) HomeDir() string {
+	return b.homeDir
 }
 
 // Setup clones the repo and creates the branch checkout.
@@ -79,6 +91,7 @@ func (b *LocalBackend) Exec(ctx context.Context, cmdStr string) ([]byte, error) 
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Dir = b.workDir
+	cmd.Env = b.buildEnv()
 	return cmd.CombinedOutput()
 }
 
@@ -90,7 +103,7 @@ func (b *LocalBackend) Command(ctx context.Context, name string, args ...string)
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = b.workDir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = b.buildEnv()
 	return cmd, nil
 }
 
@@ -222,6 +235,126 @@ func (b *LocalBackend) resolvePath(path string) (string, error) {
 	}
 
 	return absPath, nil
+}
+
+// buildEnv returns environment variables for commands run in this backend.
+// It sets HOME to the isolated home directory and preserves other env vars.
+func (b *LocalBackend) buildEnv() []string {
+	env := os.Environ()
+	result := make([]string, 0, len(env)+3)
+
+	// Filter out HOME from inherited env, we'll set our own
+	for _, e := range env {
+		if !strings.HasPrefix(e, "HOME=") {
+			result = append(result, e)
+		}
+	}
+
+	// Add our isolated HOME and other settings
+	result = append(result,
+		"HOME="+b.homeDir,
+		"TERM=xterm-256color",
+	)
+
+	return result
+}
+
+// SetupHome creates the isolated HOME directory and optionally sets up dotfiles.
+func (b *LocalBackend) SetupHome(ctx context.Context) error {
+	if b.homeDir == "" {
+		return fmt.Errorf("homeDir not set")
+	}
+
+	// Create the home directory
+	if err := os.MkdirAll(b.homeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create home directory: %w", err)
+	}
+
+	// If dotfiles URL is configured, clone and set them up
+	if b.config.Dotfiles != "" {
+		if err := b.setupDotfiles(ctx); err != nil {
+			return fmt.Errorf("failed to setup dotfiles: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// setupDotfiles clones the dotfiles repo and symlinks config files to HOME.
+func (b *LocalBackend) setupDotfiles(ctx context.Context) error {
+	dotfilesDir := filepath.Join(b.workDir, ".dotfiles")
+
+	// Clone the dotfiles repo
+	cmd := exec.CommandContext(ctx, "git", "clone", b.config.Dotfiles, dotfilesDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clone dotfiles failed: %s: %w", string(output), err)
+	}
+
+	// Check if flake.nix exists
+	flakePath := filepath.Join(dotfilesDir, "flake.nix")
+	hasFlake := false
+	if _, err := os.Stat(flakePath); err == nil {
+		hasFlake = true
+	}
+
+	// Build flake if present
+	if hasFlake {
+		if err := b.buildDotfilesFlake(ctx, dotfilesDir); err != nil {
+			// Log but don't fail - flake build is optional enhancement
+			fmt.Printf("warning: flake build failed: %v\n", err)
+		}
+	}
+
+	// Symlink all dotfiles to HOME (excluding .git, flake.nix, flake.lock)
+	return b.symlinkDotfiles(ctx, dotfilesDir)
+}
+
+// buildDotfilesFlake runs nix build on the dotfiles flake.
+func (b *LocalBackend) buildDotfilesFlake(ctx context.Context, dotfilesDir string) error {
+	cmd := exec.CommandContext(ctx, "nix", "build", "--no-link", dotfilesDir)
+	cmd.Dir = dotfilesDir
+	cmd.Env = b.buildEnv()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nix build failed: %s: %w", string(output), err)
+	}
+	return nil
+}
+
+// symlinkDotfiles symlinks config files from dotfiles dir to HOME.
+func (b *LocalBackend) symlinkDotfiles(ctx context.Context, dotfilesDir string) error {
+	entries, err := os.ReadDir(dotfilesDir)
+	if err != nil {
+		return fmt.Errorf("failed to read dotfiles dir: %w", err)
+	}
+
+	// Files/dirs to skip
+	skip := map[string]bool{
+		".git":       true,
+		"flake.nix":  true,
+		"flake.lock": true,
+		"README.md":  true,
+		"LICENSE":    true,
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if skip[name] {
+			continue
+		}
+
+		src := filepath.Join(dotfilesDir, name)
+		dst := filepath.Join(b.homeDir, name)
+
+		// Remove existing file/symlink at destination
+		os.Remove(dst)
+
+		// Create symlink
+		if err := os.Symlink(src, dst); err != nil {
+			return fmt.Errorf("failed to symlink %s: %w", name, err)
+		}
+	}
+
+	return nil
 }
 
 // Ensure LocalBackend implements Backend

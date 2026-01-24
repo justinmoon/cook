@@ -1,6 +1,7 @@
 package branch
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -47,13 +48,18 @@ func (b *Branch) Backend() (env.Backend, error) {
 	if b.Environment.Path == "" {
 		return nil, fmt.Errorf("branch has no checkout path")
 	}
-	return env.NewBackendFromPath(env.Type(b.Environment.Backend), b.Environment.Path)
+	cfg := env.Config{
+		WorkDir:  b.Environment.Path,
+		Dotfiles: b.Environment.Dotfiles,
+	}
+	return env.NewBackend(env.Type(b.Environment.Backend), cfg)
 }
 
 type EnvironmentSpec struct {
-	Backend string `json:"backend"` // "local" (future: "docker", "modal")
-	Path    string `json:"path"`    // checkout path
-	Image   string `json:"image"`   // reserved for future docker support
+	Backend  string `json:"backend"`  // "local" (future: "docker", "modal")
+	Path     string `json:"path"`     // checkout path
+	Image    string `json:"image"`    // reserved for future docker support
+	Dotfiles string `json:"dotfiles"` // git URL for dotfiles repo (optional)
 }
 
 const (
@@ -100,7 +106,7 @@ func (s *Store) Create(b *Branch) error {
 }
 
 // CreateWithCheckout creates a branch with a cloned checkout directory
-func (s *Store) CreateWithCheckout(b *Branch, bareRepoPath string) error {
+func (s *Store) CreateWithCheckout(b *Branch, bareRepoPath string, dotfiles string) error {
 	// Validate branch name
 	if strings.Contains(b.Name, "/") {
 		return fmt.Errorf("branch name cannot contain '/'")
@@ -138,10 +144,23 @@ func (s *Store) CreateWithCheckout(b *Branch, bareRepoPath string) error {
 	}
 
 	b.Environment = EnvironmentSpec{
-		Backend: "local",
-		Path:    checkoutPath,
+		Backend:  "local",
+		Path:     checkoutPath,
+		Dotfiles: dotfiles,
 	}
 	b.Status = StatusActive
+
+	// Set up the isolated home environment (and dotfiles if specified)
+	backend, err := b.Backend()
+	if err != nil {
+		os.RemoveAll(checkoutPath)
+		return fmt.Errorf("failed to create backend: %w", err)
+	}
+	lb := backend.(*env.LocalBackend)
+	if err := lb.SetupHome(context.Background()); err != nil {
+		os.RemoveAll(checkoutPath)
+		return fmt.Errorf("failed to setup home: %w", err)
+	}
 
 	// Save to DB
 	if err := s.Create(b); err != nil {

@@ -104,7 +104,7 @@ func TestGUIWorkflow(t *testing.T) {
 		TaskRepo: &repoRef,
 		TaskSlug: &tk.Slug,
 	}
-	if err := branchStore.CreateWithCheckout(b, rp.Path); err != nil {
+	if err := branchStore.CreateWithCheckout(b, rp.Path, ""); err != nil {
 		t.Fatalf("failed to create branch with checkout: %v", err)
 	}
 

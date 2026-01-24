@@ -34,9 +34,15 @@ func TestBranch_Backend(t *testing.T) {
 		}
 
 		// Verify it's a LocalBackend
-		_, ok := backend.(*env.LocalBackend)
+		lb, ok := backend.(*env.LocalBackend)
 		if !ok {
 			t.Errorf("Backend() returned %T, want *env.LocalBackend", backend)
+		}
+
+		// Verify HomeDir is set
+		expectedHome := tmpDir + "/.home"
+		if lb.HomeDir() != expectedHome {
+			t.Errorf("HomeDir() = %q, want %q", lb.HomeDir(), expectedHome)
 		}
 	})
 

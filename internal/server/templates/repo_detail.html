@@ -52,6 +52,11 @@
                     {{end}}
                 </select>
             </label>
+            <label>
+                Dotfiles (optional)
+                <input type="text" name="dotfiles" placeholder="https://github.com/user/dotfiles">
+                <small>Git URL for dotfiles repo to set up in this environment</small>
+            </label>
             {{if .BranchError}}<p style="color: var(--pico-del-color);">{{.BranchError}}</p>{{end}}
             <button type="submit">Create Branch</button>
         </form>

@@ -431,6 +431,7 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 
 	name := r.FormValue("name")
 	taskSlug := r.FormValue("task_slug")
+	dotfiles := r.FormValue("dotfiles")
 
 	if name == "" {
 		http.Error(w, "Branch name is required", http.StatusBadRequest)
@@ -456,7 +457,7 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Create branch with checkout
-	if err := branchStore.CreateWithCheckout(b, rp.Path); err != nil {
+	if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -660,7 +661,7 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 		TaskSlug: &slug,
 	}
 
-	if err := branchStore.CreateWithCheckout(b, rp.Path); err != nil {
+	if err := branchStore.CreateWithCheckout(b, rp.Path, ""); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
