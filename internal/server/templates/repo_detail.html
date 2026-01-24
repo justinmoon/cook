@@ -52,6 +52,20 @@
                     {{end}}
                 </select>
             </label>
+            <label>
+                Dotfiles (optional)
+                <select name="dotfiles">
+                    {{if .Dotfiles}}
+                    {{range .Dotfiles}}
+                    <option value="{{.URL}}">{{.Name}}</option>
+                    {{end}}
+                    <option value="">-- None --</option>
+                    {{else}}
+                    <option value="">-- None --</option>
+                    {{end}}
+                </select>
+                <small><a href="/settings/dotfiles">Manage dotfiles</a></small>
+            </label>
             {{if .BranchError}}<p style="color: var(--pico-del-color);">{{.BranchError}}</p>{{end}}
             <button type="submit">Create Branch</button>
         </form>
@@ -77,20 +91,39 @@
             <td class="{{.Status}}">{{.Status}}</td>
             <td>
                 {{if and $.IsOwner (eq .Status "open")}}
-                <button class="outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="document.getElementById('start-{{.Slug}}').showModal()">Start</button>
+                <button class="outline" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="openStartDialog('start-{{.Slug}}')">Start</button>
                 <dialog id="start-{{.Slug}}">
                     <article>
                         <header>
                             <button aria-label="Close" rel="prev" onclick="document.getElementById('start-{{.Slug}}').close()"></button>
                             <h3>Start: {{.Title}}</h3>
                         </header>
-                        <form method="POST" action="/tasks/{{.Repo}}/{{.Slug}}/start">
+                        <form class="start-form" method="POST" action="/tasks/{{.Repo}}/{{.Slug}}/start" onsubmit="saveStartPrefs(this); this.querySelector('button[type=submit]').setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').textContent = 'Starting...';">
                             <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
                             <fieldset>
                                 <legend>Choose Agent</legend>
-                                <label><input type="radio" name="agent" value="claude" checked> Claude</label>
+                                <label><input type="radio" name="agent" value="claude"> Claude</label>
                                 <label><input type="radio" name="agent" value="codex"> Codex</label>
                             </fieldset>
+                            <fieldset>
+                                <legend>Environment</legend>
+                                <label><input type="radio" name="backend" value="local"> Local</label>
+                                <label><input type="radio" name="backend" value="docker"> Docker</label>
+                            </fieldset>
+                            <label>
+                                Dotfiles (optional)
+                                <select name="dotfiles">
+                                    {{if $.Dotfiles}}
+                                    {{range $.Dotfiles}}
+                                    <option value="{{.URL}}">{{.Name}}</option>
+                                    {{end}}
+                                    <option value="">-- None --</option>
+                                    {{else}}
+                                    <option value="">-- None --</option>
+                                    {{end}}
+                                </select>
+                                <small><a href="/settings/dotfiles">Manage dotfiles</a></small>
+                            </label>
                             <button type="submit">Start with Agent</button>
                         </form>
                     </article>
@@ -159,4 +192,38 @@
 <p style="color: var(--pico-muted-color);">No commits yet.</p>
 {{end}}
 </section>
+
+<script>
+function saveStartPrefs(form) {
+    localStorage.setItem('startPrefs', JSON.stringify({
+        agent: form.agent.value,
+        backend: form.backend.value,
+        dotfiles: form.dotfiles.value
+    }));
+}
+function loadStartPrefs(form) {
+    const prefs = JSON.parse(localStorage.getItem('startPrefs') || '{}');
+    if (prefs.agent) {
+        const r = form.querySelector(`input[name=agent][value="${prefs.agent}"]`);
+        if (r) r.checked = true;
+    } else {
+        form.querySelector('input[name=agent][value=claude]').checked = true;
+    }
+    if (prefs.backend) {
+        const r = form.querySelector(`input[name=backend][value="${prefs.backend}"]`);
+        if (r) r.checked = true;
+    } else {
+        form.querySelector('input[name=backend][value=local]').checked = true;
+    }
+    if (prefs.dotfiles) {
+        const opt = form.querySelector(`select[name=dotfiles] option[value="${prefs.dotfiles}"]`);
+        if (opt) opt.selected = true;
+    }
+}
+function openStartDialog(id) {
+    const dialog = document.getElementById(id);
+    loadStartPrefs(dialog.querySelector('form'));
+    dialog.showModal();
+}
+</script>
 {{end}}

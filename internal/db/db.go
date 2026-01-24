@@ -183,6 +183,17 @@ func (db *DB) migrate() error {
 			FOREIGN KEY (branch_repo, branch_name) REFERENCES branches(repo, name) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_editor_tabs_branch ON editor_tabs(branch_repo, branch_name)`,
+
+		// Dotfiles: user's saved dotfiles repos
+		`CREATE TABLE IF NOT EXISTS dotfiles (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			pubkey TEXT NOT NULL,
+			name TEXT NOT NULL,
+			url TEXT NOT NULL,
+			created_at INTEGER DEFAULT (unixepoch()),
+			UNIQUE(pubkey, name)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_dotfiles_pubkey ON dotfiles(pubkey)`,
 	}
 
 	for _, m := range migrations {

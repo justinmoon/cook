@@ -19,6 +19,7 @@ import (
 	"github.com/justinmoon/cook/internal/agent"
 	"github.com/justinmoon/cook/internal/auth"
 	"github.com/justinmoon/cook/internal/branch"
+	"github.com/justinmoon/cook/internal/dotfiles"
 	"github.com/justinmoon/cook/internal/editor"
 	"github.com/justinmoon/cook/internal/events"
 	"github.com/justinmoon/cook/internal/gate"
@@ -108,6 +109,7 @@ func init() {
 		"tasks.html",
 		"task_detail.html",
 		"branches.html",
+		"settings_dotfiles.html",
 	}
 
 	for _, page := range pages {
@@ -369,6 +371,72 @@ func (s *Server) handleDashboardRepoCreate(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/repos/"+rp.Owner+"/"+rp.Name, http.StatusSeeOther)
 }
 
+func (s *Server) handleSettingsDotfiles(w http.ResponseWriter, r *http.Request) {
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	store := dotfiles.NewStore(s.db)
+	list, _ := store.List(pubkey)
+
+	data := s.baseTemplateData(r, "Dotfiles Settings")
+	data["Dotfiles"] = list
+
+	if err := renderTemplate(w, "settings_dotfiles.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleSettingsDotfilesAdd(w http.ResponseWriter, r *http.Request) {
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	name := r.FormValue("name")
+	url := r.FormValue("url")
+
+	if name == "" || url == "" {
+		http.Error(w, "Name and URL are required", http.StatusBadRequest)
+		return
+	}
+
+	store := dotfiles.NewStore(s.db)
+	d := &dotfiles.Dotfiles{
+		Pubkey: pubkey,
+		Name:   name,
+		URL:    url,
+	}
+	if err := store.Create(d); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	http.Redirect(w, r, "/settings/dotfiles", http.StatusSeeOther)
+}
+
+func (s *Server) handleSettingsDotfilesDelete(w http.ResponseWriter, r *http.Request) {
+	pubkey := auth.GetPubkey(r.Context())
+	if pubkey == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	name := chi.URLParam(r, "name")
+	store := dotfiles.NewStore(s.db)
+	store.Delete(pubkey, name)
+
+	http.Redirect(w, r, "/settings/dotfiles", http.StatusSeeOther)
+}
+
 func (s *Server) handleRepoTaskCreate(w http.ResponseWriter, r *http.Request) {
 	owner := chi.URLParam(r, "owner")
 	repoName := chi.URLParam(r, "repo")
@@ -431,6 +499,7 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 
 	name := r.FormValue("name")
 	taskSlug := r.FormValue("task_slug")
+	dotfiles := r.FormValue("dotfiles")
 
 	if name == "" {
 		http.Error(w, "Branch name is required", http.StatusBadRequest)
@@ -456,7 +525,7 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Create branch with checkout
-	if err := branchStore.CreateWithCheckout(b, rp.Path); err != nil {
+	if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -531,6 +600,13 @@ func (s *Server) handleRepoDetail(w http.ResponseWriter, r *http.Request) {
 	user := s.getTemplateUser(r)
 	data["IsOwner"] = user != nil && user.Pubkey == owner
 
+	// Get user's saved dotfiles for dropdown
+	if user != nil {
+		dotfilesStore := dotfiles.NewStore(s.db)
+		userDotfiles, _ := dotfilesStore.List(user.Pubkey)
+		data["Dotfiles"] = userDotfiles
+	}
+
 	if err := renderTemplate(w, "repo_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -592,6 +668,13 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 	user := s.getTemplateUser(r)
 	data["IsOwner"] = user != nil && user.Pubkey == owner
 
+	// Get user's saved dotfiles for dropdown
+	if user != nil {
+		dotfilesStore := dotfiles.NewStore(s.db)
+		userDotfiles, _ := dotfilesStore.List(user.Pubkey)
+		data["Dotfiles"] = userDotfiles
+	}
+
 	if err := renderTemplate(w, "task_detail.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -616,8 +699,17 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agentType := r.FormValue("agent")
+	dotfiles := r.FormValue("dotfiles")
+	backendType := r.FormValue("backend")
+	if backendType == "" {
+		backendType = "local" // default to local
+	}
 	if agentType != "claude" && agentType != "codex" {
 		http.Error(w, "Invalid agent type", http.StatusBadRequest)
+		return
+	}
+	if backendType != "local" && backendType != "docker" {
+		http.Error(w, "Invalid backend type", http.StatusBadRequest)
 		return
 	}
 
@@ -660,9 +752,17 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 		TaskSlug: &slug,
 	}
 
-	if err := branchStore.CreateWithCheckout(b, rp.Path); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	// Create with appropriate backend
+	if backendType == "docker" {
+		if err := branchStore.CreateWithDockerCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Write TASK.md with task description

@@ -21,15 +21,63 @@
             <button aria-label="Close" rel="prev" onclick="document.getElementById('start-task').close()"></button>
             <h3>Start: {{.Task.Title}}</h3>
         </header>
-        <form method="POST" action="/tasks/{{.Task.Repo}}/{{.Task.Slug}}/start">
+        <form id="start-task-form" method="POST" action="/tasks/{{.Task.Repo}}/{{.Task.Slug}}/start" onsubmit="saveStartPrefs(this); this.querySelector('button[type=submit]').setAttribute('aria-busy', 'true'); this.querySelector('button[type=submit]').textContent = 'Starting...';">
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
             <fieldset>
                 <legend>Choose Agent</legend>
-                <label><input type="radio" name="agent" value="claude" checked> Claude</label>
+                <label><input type="radio" name="agent" value="claude"> Claude</label>
                 <label><input type="radio" name="agent" value="codex"> Codex</label>
             </fieldset>
+            <fieldset>
+                <legend>Environment</legend>
+                <label><input type="radio" name="backend" value="local"> Local</label>
+                <label><input type="radio" name="backend" value="docker"> Docker</label>
+            </fieldset>
+            <label>
+                Dotfiles (optional)
+                <select name="dotfiles">
+                    {{if .Dotfiles}}
+                    {{range .Dotfiles}}
+                    <option value="{{.URL}}">{{.Name}}</option>
+                    {{end}}
+                    <option value="">-- None --</option>
+                    {{else}}
+                    <option value="">-- None --</option>
+                    {{end}}
+                </select>
+                <small><a href="/settings/dotfiles">Manage dotfiles</a></small>
+            </label>
             <button type="submit">Start with Agent</button>
         </form>
+        <script>
+        function saveStartPrefs(form) {
+            localStorage.setItem('startPrefs', JSON.stringify({
+                agent: form.agent.value,
+                backend: form.backend.value,
+                dotfiles: form.dotfiles.value
+            }));
+        }
+        function loadStartPrefs(form) {
+            const prefs = JSON.parse(localStorage.getItem('startPrefs') || '{}');
+            if (prefs.agent) {
+                const r = form.querySelector(`input[name=agent][value="${prefs.agent}"]`);
+                if (r) r.checked = true;
+            } else {
+                form.querySelector('input[name=agent][value=claude]').checked = true;
+            }
+            if (prefs.backend) {
+                const r = form.querySelector(`input[name=backend][value="${prefs.backend}"]`);
+                if (r) r.checked = true;
+            } else {
+                form.querySelector('input[name=backend][value=local]').checked = true;
+            }
+            if (prefs.dotfiles) {
+                const opt = form.querySelector(`select[name=dotfiles] option[value="${prefs.dotfiles}"]`);
+                if (opt) opt.selected = true;
+            }
+        }
+        loadStartPrefs(document.getElementById('start-task-form'));
+        </script>
     </article>
 </dialog>
 {{end}}

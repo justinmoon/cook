@@ -1,19 +1,24 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"github.com/justinmoon/cook/internal/agent"
 	"github.com/justinmoon/cook/internal/auth"
 	"github.com/justinmoon/cook/internal/branch"
+	"github.com/justinmoon/cook/internal/env"
+	"github.com/justinmoon/cook/internal/envagent"
 )
 
 var upgrader = websocket.Upgrader{
@@ -75,24 +80,33 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errBranchNotFound := errors.New("branch not found")
-	errNoCheckout := errors.New("branch has no checkout path")
+	// Get branch to determine backend type
+	branchStore := branch.NewStore(s.db, s.cfg.Server.DataDir)
+	b, err := branchStore.Get(repoRef, branchName)
+	if err != nil {
+		http.Error(w, "Failed to get branch", http.StatusInternalServerError)
+		return
+	}
+	if b == nil {
+		http.Error(w, "Branch not found", http.StatusNotFound)
+		return
+	}
+	if b.Environment.Path == "" {
+		http.Error(w, "Branch has no checkout path", http.StatusBadRequest)
+		return
+	}
+
+	// For Docker backend, use cook-agent protocol
+	if b.Environment.Backend == "docker" {
+		s.handleDockerTerminalWS(w, r, b, sessionKey, isAgentSession, initialRows, initialCols)
+		return
+	}
+
+	// For local backend, use direct PTY management
 	errNoShell := errors.New("no shell found")
 
 	// Get existing session or create new one (with initial size from URL)
 	sess, created, err := s.termMgr.GetOrCreate(sessionKey, func() (*exec.Cmd, error) {
-		branchStore := branch.NewStore(s.db, s.cfg.Server.DataDir)
-		b, err := branchStore.Get(repoRef, branchName)
-		if err != nil {
-			return nil, err
-		}
-		if b == nil {
-			return nil, errBranchNotFound
-		}
-		if b.Environment.Path == "" {
-			return nil, errNoCheckout
-		}
-
 		// Only check for agent session on the main (non-tab) terminal
 		if isAgentSession {
 			agentStore := agent.NewStore(s.db)
@@ -104,27 +118,31 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Create a shell PTY in the checkout directory
+		// Get backend to create shell command
+		backend, err := b.Backend()
+		if err != nil {
+			return nil, err
+		}
+
+		lb := backend.(*env.LocalBackend)
+		// Create a shell PTY using the backend's Command method (gets proper env with isolated HOME)
 		shells := []string{"/bin/zsh", "/bin/bash", "/bin/sh"}
 		for _, shell := range shells {
 			if _, err := os.Stat(shell); err == nil {
-				cmd := exec.Command(shell)
-				cmd.Dir = b.Environment.Path
-				cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+				cmd, err := lb.Command(context.Background(), shell, "-l")
+				if err != nil {
+					return nil, err
+				}
 				return cmd, nil
 			}
 		}
 		return nil, errNoShell
 	}, initialRows, initialCols)
 	if err != nil {
-		switch {
-		case errors.Is(err, errBranchNotFound):
-			http.Error(w, "Branch not found", http.StatusNotFound)
-		case errors.Is(err, errNoCheckout):
-			http.Error(w, "Branch has no checkout path", http.StatusBadRequest)
-		case errors.Is(err, errNoShell):
+		if errors.Is(err, errNoShell) {
 			http.Error(w, "No shell found", http.StatusInternalServerError)
-		default:
+		} else {
+			log.Printf("Failed to create terminal session: %v", err)
 			http.Error(w, "Failed to create terminal session", http.StatusInternalServerError)
 		}
 		return
@@ -212,3 +230,137 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // StartTerminalSession is no longer needed - PTY is created on WebSocket connect
+
+// handleDockerTerminalWS handles terminal connections for Docker backends via cook-agent
+func (s *Server) handleDockerTerminalWS(w http.ResponseWriter, r *http.Request, b *branch.Branch, sessionKey string, isAgentSession bool, initialRows, initialCols uint16) {
+	// Get the Docker backend to find agent address
+	backend, err := b.Backend()
+	if err != nil {
+		http.Error(w, "Failed to get backend: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	dockerBackend := backend.(*env.DockerBackend)
+	agentAddr := dockerBackend.AgentAddr()
+
+	// Connect to cook-agent
+	agentClient, err := envagent.Dial(agentAddr)
+	if err != nil {
+		log.Printf("Failed to connect to cook-agent at %s: %v", agentAddr, err)
+		http.Error(w, "Failed to connect to container agent", http.StatusInternalServerError)
+		return
+	}
+	defer agentClient.Close()
+
+	// Determine the command to run
+	var command string
+	if isAgentSession {
+		agentStore := agent.NewStore(s.db)
+		agentSession, _ := agentStore.GetLatest(b.Repo, b.Name)
+		if agentSession != nil {
+			// Build command with prompt if available
+			prompt := agentSession.Prompt
+			switch agentSession.AgentType {
+			case agent.AgentClaude:
+				if prompt != "" {
+					escapedPrompt := strings.ReplaceAll(prompt, "'", "'\"'\"'")
+					command = fmt.Sprintf("claude --dangerously-skip-permissions '%s'", escapedPrompt)
+				} else {
+					command = "claude --dangerously-skip-permissions"
+				}
+			case agent.AgentCodex:
+				if prompt != "" {
+					escapedPrompt := strings.ReplaceAll(prompt, "'", "'\"'\"'")
+					command = fmt.Sprintf("codex '%s'", escapedPrompt)
+				} else {
+					command = "codex"
+				}
+			default:
+				command = "bash -l"
+			}
+		} else {
+			command = "bash -l"
+		}
+	} else {
+		command = "bash -l"
+	}
+
+	// Try to attach to existing session, or create new one
+	sessionID := sessionKey
+	err = agentClient.AttachSession(sessionID)
+	if err != nil {
+		// Session doesn't exist, create it
+		log.Printf("Creating new agent session %s: %s", sessionID, command)
+		err = agentClient.CreateSession(sessionID, command, "/workspace")
+		if err != nil {
+			log.Printf("Failed to create agent session: %v", err)
+			http.Error(w, "Failed to create session in container", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		log.Printf("Attached to existing agent session %s", sessionID)
+	}
+
+	// Upgrade to WebSocket
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade error: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// Set initial size
+	if initialRows > 0 && initialCols > 0 {
+		agentClient.Resize(sessionID, int(initialRows), int(initialCols))
+	}
+
+	// Forward agent output to WebSocket
+	agentClient.SetOutputHandler(func(sid string, data []byte) {
+		if sid == sessionID {
+			if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+				log.Printf("WebSocket write error: %v", err)
+			}
+		}
+	})
+
+	// Start reading from agent in background
+	go func() {
+		if err := agentClient.ReadLoop(); err != nil {
+			log.Printf("Agent read loop error: %v", err)
+		}
+		conn.Close()
+	}()
+
+	// Read from WebSocket and forward to agent
+	for {
+		messageType, data, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("WebSocket read error: %v", err)
+			}
+			return
+		}
+
+		switch messageType {
+		case websocket.BinaryMessage, websocket.TextMessage:
+			// Check if it's a control message
+			var msg wsMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type != "" {
+				switch msg.Type {
+				case "resize":
+					var resize resizeMsg
+					if err := json.Unmarshal(msg.Data, &resize); err == nil {
+						agentClient.Resize(sessionID, int(resize.Rows), int(resize.Cols))
+					}
+				case "input":
+					var input string
+					if err := json.Unmarshal(msg.Data, &input); err == nil {
+						agentClient.SendInput(sessionID, []byte(input))
+					}
+				}
+			} else {
+				// Raw input
+				agentClient.SendInput(sessionID, data)
+			}
+		}
+	}
+}

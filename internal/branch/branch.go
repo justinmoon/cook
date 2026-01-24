@@ -1,6 +1,7 @@
 package branch
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/justinmoon/cook/internal/db"
+	"github.com/justinmoon/cook/internal/env"
 )
 
 type Branch struct {
@@ -40,10 +42,34 @@ func (b *Branch) TaskFullName() string {
 	return ""
 }
 
+// Backend returns a Backend for this branch's environment.
+// Returns an error if the branch has no environment configured.
+func (b *Branch) Backend() (env.Backend, error) {
+	if b.Environment.Path == "" {
+		return nil, fmt.Errorf("branch has no checkout path")
+	}
+
+	// For Docker backend, reconnect using container ID
+	if b.Environment.Backend == "docker" {
+		if b.Environment.ContainerID == "" {
+			return nil, fmt.Errorf("docker backend has no container ID")
+		}
+		return env.NewDockerBackendFromContainerID(b.Environment.ContainerID, b.Environment.Path)
+	}
+
+	cfg := env.Config{
+		WorkDir:  b.Environment.Path,
+		Dotfiles: b.Environment.Dotfiles,
+	}
+	return env.NewBackend(env.Type(b.Environment.Backend), cfg)
+}
+
 type EnvironmentSpec struct {
-	Backend string `json:"backend"` // "local" (future: "docker", "modal")
-	Path    string `json:"path"`    // checkout path
-	Image   string `json:"image"`   // reserved for future docker support
+	Backend     string `json:"backend"`                // "local", "docker", "modal"
+	Path        string `json:"path"`                   // checkout path (host path for docker)
+	Image       string `json:"image,omitempty"`        // docker image (optional)
+	Dotfiles    string `json:"dotfiles,omitempty"`     // git URL for dotfiles repo (optional)
+	ContainerID string `json:"container_id,omitempty"` // docker container ID
 }
 
 const (
@@ -90,7 +116,7 @@ func (s *Store) Create(b *Branch) error {
 }
 
 // CreateWithCheckout creates a branch with a cloned checkout directory
-func (s *Store) CreateWithCheckout(b *Branch, bareRepoPath string) error {
+func (s *Store) CreateWithCheckout(b *Branch, bareRepoPath string, dotfiles string) error {
 	// Validate branch name
 	if strings.Contains(b.Name, "/") {
 		return fmt.Errorf("branch name cannot contain '/'")
@@ -128,10 +154,23 @@ func (s *Store) CreateWithCheckout(b *Branch, bareRepoPath string) error {
 	}
 
 	b.Environment = EnvironmentSpec{
-		Backend: "local",
-		Path:    checkoutPath,
+		Backend:  "local",
+		Path:     checkoutPath,
+		Dotfiles: dotfiles,
 	}
 	b.Status = StatusActive
+
+	// Set up the isolated home environment (and dotfiles if specified)
+	backend, err := b.Backend()
+	if err != nil {
+		os.RemoveAll(checkoutPath)
+		return fmt.Errorf("failed to create backend: %w", err)
+	}
+	lb := backend.(*env.LocalBackend)
+	if err := lb.SetupHome(context.Background()); err != nil {
+		os.RemoveAll(checkoutPath)
+		return fmt.Errorf("failed to setup home: %w", err)
+	}
 
 	// Save to DB
 	if err := s.Create(b); err != nil {
@@ -142,13 +181,81 @@ func (s *Store) CreateWithCheckout(b *Branch, bareRepoPath string) error {
 	return nil
 }
 
-// RemoveCheckout removes the checkout directory for a branch
+// CreateWithDockerCheckout creates a branch with a Docker container environment
+func (s *Store) CreateWithDockerCheckout(b *Branch, bareRepoPath string, dotfiles string) error {
+	// Validate branch name
+	if strings.Contains(b.Name, "/") {
+		return fmt.Errorf("branch name cannot contain '/'")
+	}
+
+	// Get base rev from master
+	baseRev, err := getHeadRev(bareRepoPath, "master")
+	if err != nil {
+		return fmt.Errorf("failed to get master HEAD: %w (does the repo have commits?)", err)
+	}
+	b.BaseRev = baseRev
+	b.HeadRev = baseRev
+
+	// Create checkout path on host: dataDir/checkouts/repo/branch
+	checkoutPath := filepath.Join(s.dataDir, "checkouts", b.Repo, b.Name)
+
+	// Remove if exists (clean slate)
+	os.RemoveAll(checkoutPath)
+
+	// Create Docker backend config
+	containerName := strings.ReplaceAll(b.Repo, "/", "-") + "-" + b.Name
+	cfg := env.Config{
+		Name:       containerName,
+		RepoURL:    bareRepoPath,
+		BranchName: b.Name,
+		WorkDir:    checkoutPath,
+		Dotfiles:   dotfiles,
+	}
+
+	backend, err := env.NewDockerBackend(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create docker backend: %w", err)
+	}
+
+	// Setup the container (this clones repo, starts container, sets up dotfiles)
+	if err := backend.Setup(context.Background()); err != nil {
+		backend.Teardown(context.Background())
+		return fmt.Errorf("failed to setup docker environment: %w", err)
+	}
+
+	b.Environment = EnvironmentSpec{
+		Backend:     "docker",
+		Path:        checkoutPath,
+		Dotfiles:    dotfiles,
+		ContainerID: backend.ContainerID(),
+	}
+	b.Status = StatusActive
+
+	// Save to DB
+	if err := s.Create(b); err != nil {
+		backend.Teardown(context.Background())
+		return err
+	}
+
+	return nil
+}
+
+// RemoveCheckout removes the checkout directory for a branch.
+// For Docker branches, this also tears down the container.
 func (s *Store) RemoveCheckout(b *Branch) error {
 	if b.Environment.Path == "" {
 		return nil
 	}
 
-	// Just remove the directory
+	// For Docker backend, teardown the container first
+	if b.Environment.Backend == "docker" && b.Environment.ContainerID != "" {
+		backend, err := b.Backend()
+		if err == nil {
+			backend.Teardown(context.Background())
+		}
+	}
+
+	// Remove the directory
 	return os.RemoveAll(b.Environment.Path)
 }
 
