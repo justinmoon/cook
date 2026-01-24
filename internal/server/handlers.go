@@ -502,6 +502,7 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 	name := r.FormValue("name")
 	taskSlug := r.FormValue("task_slug")
 	dotfiles := r.FormValue("dotfiles")
+	backendType := r.FormValue("backend")
 
 	if name == "" {
 		http.Error(w, "Branch name is required", http.StatusBadRequest)
@@ -526,10 +527,23 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 		b.TaskSlug = &taskSlug
 	}
 
-	// Create branch with checkout
-	if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	// Create branch with appropriate backend
+	switch backendType {
+	case "docker":
+		if err := branchStore.CreateWithDockerCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "modal":
+		if err := branchStore.CreateWithModalCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	default:
+		if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// If linked to a task, set task to in_progress
@@ -813,12 +827,18 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create with appropriate backend
-	if backendType == "docker" {
+	switch backendType {
+	case "docker":
 		if err := branchStore.CreateWithDockerCheckout(b, rp.Path, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-	} else {
+	case "modal":
+		if err := branchStore.CreateWithModalCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	default:
 		if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
