@@ -51,19 +51,14 @@ func NewStore(database *db.DB, dataDir string) *Store {
 }
 
 func (s *Store) CreateRun(run *GateRun) error {
-	result, err := s.db.Exec(`
+	err := s.db.QueryRow(`
 		INSERT INTO gate_runs (branch_repo, branch_name, gate_name, rev, status, started_at, log_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, run.BranchRepo, run.BranchName, run.GateName, run.Rev, run.Status, run.StartedAt, run.LogPath)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id
+	`, run.BranchRepo, run.BranchName, run.GateName, run.Rev, run.Status, run.StartedAt, run.LogPath).Scan(&run.ID)
 	if err != nil {
 		return err
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
-	}
-	run.ID = id
 
 	return nil
 }
@@ -71,8 +66,8 @@ func (s *Store) CreateRun(run *GateRun) error {
 func (s *Store) UpdateRun(run *GateRun) error {
 	_, err := s.db.Exec(`
 		UPDATE gate_runs 
-		SET status = ?, finished_at = ?, exit_code = ?
-		WHERE id = ?
+		SET status = $1, finished_at = $2, exit_code = $3
+		WHERE id = $4
 	`, run.Status, run.FinishedAt, run.ExitCode, run.ID)
 	return err
 }
@@ -81,7 +76,7 @@ func (s *Store) GetLatestRun(repo, branchName, gateName string) (*GateRun, error
 	row := s.db.QueryRow(`
 		SELECT id, branch_repo, branch_name, gate_name, rev, status, started_at, finished_at, exit_code, log_path
 		FROM gate_runs 
-		WHERE branch_repo = ? AND branch_name = ? AND gate_name = ?
+		WHERE branch_repo = $1 AND branch_name = $2 AND gate_name = $3
 		ORDER BY id DESC
 		LIMIT 1
 	`, repo, branchName, gateName)
@@ -93,7 +88,7 @@ func (s *Store) ListRuns(repo, branchName string) ([]GateRun, error) {
 	rows, err := s.db.Query(`
 		SELECT id, branch_repo, branch_name, gate_name, rev, status, started_at, finished_at, exit_code, log_path
 		FROM gate_runs 
-		WHERE branch_repo = ? AND branch_name = ?
+		WHERE branch_repo = $1 AND branch_name = $2
 		ORDER BY id DESC
 	`, repo, branchName)
 	if err != nil {

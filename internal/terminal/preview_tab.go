@@ -31,7 +31,7 @@ func (s *PreviewTabStore) Create(tab *PreviewTab) error {
 	historyJSON, _ := json.Marshal(tab.History)
 	_, err := s.db.Exec(`
 		INSERT INTO preview_tabs (id, branch_repo, branch_name, name, current_url, history_json, history_index)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, tab.ID, tab.BranchRepo, tab.BranchName, tab.Name, tab.CurrentURL, string(historyJSON), tab.HistoryIndex)
 	return err
 }
@@ -40,14 +40,14 @@ func (s *PreviewTabStore) Update(tab *PreviewTab) error {
 	historyJSON, _ := json.Marshal(tab.History)
 	_, err := s.db.Exec(`
 		UPDATE preview_tabs 
-		SET current_url = ?, history_json = ?, history_index = ?, name = ?
-		WHERE id = ?
+		SET current_url = $1, history_json = $2, history_index = $3, name = $4
+		WHERE id = $5
 	`, tab.CurrentURL, string(historyJSON), tab.HistoryIndex, tab.Name, tab.ID)
 	return err
 }
 
 func (s *PreviewTabStore) Delete(id string) error {
-	_, err := s.db.Exec(`DELETE FROM preview_tabs WHERE id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM preview_tabs WHERE id = $1`, id)
 	return err
 }
 
@@ -55,7 +55,7 @@ func (s *PreviewTabStore) ListByBranch(repo, branchName string) ([]PreviewTab, e
 	rows, err := s.db.Query(`
 		SELECT id, branch_repo, branch_name, name, current_url, history_json, history_index, created_at
 		FROM preview_tabs
-		WHERE branch_repo = ? AND branch_name = ?
+		WHERE branch_repo = $1 AND branch_name = $2
 		ORDER BY created_at ASC
 	`, repo, branchName)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *PreviewTabStore) Get(id string) (*PreviewTab, error) {
 	var historyJSON string
 	err := s.db.QueryRow(`
 		SELECT id, branch_repo, branch_name, name, current_url, history_json, history_index, created_at
-		FROM preview_tabs WHERE id = ?
+		FROM preview_tabs WHERE id = $1
 	`, id).Scan(&t.ID, &t.BranchRepo, &t.BranchName, &t.Name, &t.CurrentURL, &historyJSON, &t.HistoryIndex, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil

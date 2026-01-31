@@ -1273,9 +1273,9 @@ func (s *Server) handleBranchAbandon(w http.ResponseWriter, r *http.Request) {
 	branchStore.RemoveCheckout(b)
 
 	// Delete related records first (FK constraints)
-	s.db.Exec(`DELETE FROM gate_runs WHERE branch_repo = ? AND branch_name = ?`, repoRef, name)
-	s.db.Exec(`DELETE FROM agent_sessions WHERE branch_repo = ? AND branch_name = ?`, repoRef, name)
-	s.db.Exec(`DELETE FROM terminal_tabs WHERE branch_repo = ? AND branch_name = ?`, repoRef, name)
+	s.db.Exec(`DELETE FROM gate_runs WHERE branch_repo = $1 AND branch_name = $2`, repoRef, name)
+	s.db.Exec(`DELETE FROM agent_sessions WHERE branch_repo = $1 AND branch_name = $2`, repoRef, name)
+	s.db.Exec(`DELETE FROM terminal_tabs WHERE branch_repo = $1 AND branch_name = $2`, repoRef, name)
 
 	// Delete branch from DB
 	if err := branchStore.Delete(repoRef, name); err != nil {

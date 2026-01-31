@@ -33,6 +33,7 @@ func main() {
 	var serveHost string
 	var servePort int
 	var dataDir string
+	var databaseURL string
 
 	serveCmd := &cobra.Command{
 		Use:   "serve",
@@ -53,14 +54,21 @@ func main() {
 			if dataDir != "" {
 				cfg.Server.DataDir = dataDir
 			}
+			if databaseURL != "" {
+				cfg.Server.DatabaseURL = databaseURL
+			}
 
 			// Ensure data directories exist
 			if err := cfg.EnsureDataDir(); err != nil {
 				return fmt.Errorf("failed to create data directories: %w", err)
 			}
 
+			if cfg.Server.DatabaseURL == "" {
+				return fmt.Errorf("COOK_DATABASE_URL is required")
+			}
+
 			// Open database
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := db.Open(cfg.Server.DatabaseURL)
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
@@ -99,6 +107,7 @@ func main() {
 	serveCmd.Flags().StringVar(&serveHost, "host", "", "host to bind (default from config)")
 	serveCmd.Flags().IntVar(&servePort, "port", 0, "port to bind (default from config)")
 	serveCmd.Flags().StringVar(&dataDir, "data-dir", "", "data directory (default from config)")
+	serveCmd.Flags().StringVar(&databaseURL, "database-url", "", "database URL (default from config)")
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(serveCmd)

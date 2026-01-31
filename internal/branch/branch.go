@@ -111,16 +111,14 @@ func (s *Store) Create(b *Branch) error {
 		return err
 	}
 
-	result, err := s.db.Exec(`
+	err = s.db.QueryRow(`
 		INSERT INTO branches (repo, name, task_repo, task_slug, base_rev, head_rev, environment_json, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, b.Repo, b.Name, b.TaskRepo, b.TaskSlug, b.BaseRev, b.HeadRev, string(envJSON), b.Status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id
+	`, b.Repo, b.Name, b.TaskRepo, b.TaskSlug, b.BaseRev, b.HeadRev, string(envJSON), b.Status).Scan(&b.ID)
 	if err != nil {
 		return err
 	}
-
-	id, _ := result.LastInsertId()
-	b.ID = id
 	return nil
 }
 
@@ -335,12 +333,10 @@ func (s *Store) RemoveCheckout(b *Branch) error {
 	return nil
 }
 
-
-
 func (s *Store) Get(repo, name string) (*Branch, error) {
 	row := s.db.QueryRow(`
 		SELECT id, repo, name, task_repo, task_slug, base_rev, head_rev, environment_json, status, created_at, merged_at
-		FROM branches WHERE repo = ? AND name = ?
+		FROM branches WHERE repo = $1 AND name = $2
 	`, repo, name)
 
 	return scanBranch(row)
@@ -351,11 +347,11 @@ func (s *Store) List(repo, status string) ([]Branch, error) {
 	args := []interface{}{}
 
 	if repo != "" {
-		query += " AND repo = ?"
+		query += fmt.Sprintf(" AND repo = $%d", len(args)+1)
 		args = append(args, repo)
 	}
 	if status != "" {
-		query += " AND status = ?"
+		query += fmt.Sprintf(" AND status = $%d", len(args)+1)
 		args = append(args, status)
 	}
 
@@ -386,7 +382,7 @@ func (s *Store) UpdateStatus(repo, name, status string) error {
 	}
 
 	result, err := s.db.Exec(`
-		UPDATE branches SET status = ?, merged_at = ? WHERE repo = ? AND name = ?
+		UPDATE branches SET status = $1, merged_at = $2 WHERE repo = $3 AND name = $4
 	`, status, mergedAt, repo, name)
 
 	if err != nil {
@@ -406,7 +402,7 @@ func (s *Store) UpdateStatus(repo, name, status string) error {
 
 func (s *Store) UpdateHeadRev(repo, name, rev string) error {
 	result, err := s.db.Exec(`
-		UPDATE branches SET head_rev = ? WHERE repo = ? AND name = ?
+		UPDATE branches SET head_rev = $1 WHERE repo = $2 AND name = $3
 	`, rev, repo, name)
 
 	if err != nil {
@@ -426,7 +422,7 @@ func (s *Store) UpdateHeadRev(repo, name, rev string) error {
 
 func (s *Store) UpdateBaseRev(repo, name, rev string) error {
 	result, err := s.db.Exec(`
-		UPDATE branches SET base_rev = ? WHERE repo = ? AND name = ?
+		UPDATE branches SET base_rev = $1 WHERE repo = $2 AND name = $3
 	`, rev, repo, name)
 
 	if err != nil {
@@ -445,7 +441,7 @@ func (s *Store) UpdateBaseRev(repo, name, rev string) error {
 }
 
 func (s *Store) Delete(repo, name string) error {
-	result, err := s.db.Exec(`DELETE FROM branches WHERE repo = ? AND name = ?`, repo, name)
+	result, err := s.db.Exec(`DELETE FROM branches WHERE repo = $1 AND name = $2`, repo, name)
 	if err != nil {
 		return err
 	}

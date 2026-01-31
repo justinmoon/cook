@@ -90,23 +90,22 @@ func (s *Store) Create(task *Task) error {
 		return err
 	}
 
-	result, err := s.db.Exec(`
+	err = s.db.QueryRow(`
 		INSERT INTO tasks (repo, slug, title, body, priority, status, depends_on)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, task.Repo, task.Slug, task.Title, task.Body, task.Priority, task.Status, string(depsJSON))
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id
+	`, task.Repo, task.Slug, task.Title, task.Body, task.Priority, task.Status, string(depsJSON)).Scan(&task.ID)
 	if err != nil {
 		return err
 	}
 
-	id, _ := result.LastInsertId()
-	task.ID = id
 	return nil
 }
 
 func (s *Store) Get(repo, slug string) (*Task, error) {
 	row := s.db.QueryRow(`
 		SELECT id, repo, slug, title, body, priority, status, depends_on, created_at, updated_at
-		FROM tasks WHERE repo = ? AND slug = ?
+		FROM tasks WHERE repo = $1 AND slug = $2
 	`, repo, slug)
 
 	return scanTask(row)
@@ -117,11 +116,11 @@ func (s *Store) List(repo, status string) ([]Task, error) {
 	args := []interface{}{}
 
 	if repo != "" {
-		query += " AND repo = ?"
+		query += fmt.Sprintf(" AND repo = $%d", len(args)+1)
 		args = append(args, repo)
 	}
 	if status != "" {
-		query += " AND status = ?"
+		query += fmt.Sprintf(" AND status = $%d", len(args)+1)
 		args = append(args, status)
 	}
 
@@ -153,8 +152,8 @@ func (s *Store) Update(task *Task) error {
 
 	result, err := s.db.Exec(`
 		UPDATE tasks 
-		SET title = ?, body = ?, priority = ?, status = ?, depends_on = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE repo = ? AND slug = ?
+		SET title = $1, body = $2, priority = $3, status = $4, depends_on = $5, updated_at = NOW()
+		WHERE repo = $6 AND slug = $7
 	`, task.Title, task.Body, task.Priority, task.Status, string(depsJSON), task.Repo, task.Slug)
 
 	if err != nil {
@@ -174,7 +173,7 @@ func (s *Store) Update(task *Task) error {
 
 func (s *Store) UpdateStatus(repo, slug, status string) error {
 	result, err := s.db.Exec(`
-		UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE repo = ? AND slug = ?
+		UPDATE tasks SET status = $1, updated_at = NOW() WHERE repo = $2 AND slug = $3
 	`, status, repo, slug)
 
 	if err != nil {
@@ -193,7 +192,7 @@ func (s *Store) UpdateStatus(repo, slug, status string) error {
 }
 
 func (s *Store) Delete(repo, slug string) error {
-	result, err := s.db.Exec(`DELETE FROM tasks WHERE repo = ? AND slug = ?`, repo, slug)
+	result, err := s.db.Exec(`DELETE FROM tasks WHERE repo = $1 AND slug = $2`, repo, slug)
 	if err != nil {
 		return err
 	}

@@ -33,7 +33,7 @@ func (s *TabStore) Create(tab *Tab) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO editor_tabs (id, branch_repo, branch_name, name, path, view_state_json)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, tab.ID, tab.BranchRepo, tab.BranchName, tab.Name, tab.Path, string(viewState))
 	return err
 }
@@ -45,14 +45,14 @@ func (s *TabStore) Update(tab *Tab) error {
 	}
 	_, err := s.db.Exec(`
 		UPDATE editor_tabs
-		SET name = ?, path = ?, view_state_json = ?
-		WHERE id = ?
+		SET name = $1, path = $2, view_state_json = $3
+		WHERE id = $4
 	`, tab.Name, tab.Path, string(viewState), tab.ID)
 	return err
 }
 
 func (s *TabStore) Delete(id string) error {
-	_, err := s.db.Exec(`DELETE FROM editor_tabs WHERE id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM editor_tabs WHERE id = $1`, id)
 	return err
 }
 
@@ -60,7 +60,7 @@ func (s *TabStore) ListByBranch(repo, branchName string) ([]Tab, error) {
 	rows, err := s.db.Query(`
 		SELECT id, branch_repo, branch_name, name, path, view_state_json, created_at
 		FROM editor_tabs
-		WHERE branch_repo = ? AND branch_name = ?
+		WHERE branch_repo = $1 AND branch_name = $2
 		ORDER BY created_at ASC
 	`, repo, branchName)
 	if err != nil {
@@ -91,7 +91,7 @@ func (s *TabStore) Get(id string) (*Tab, error) {
 	err := s.db.QueryRow(`
 		SELECT id, branch_repo, branch_name, name, path, view_state_json, created_at
 		FROM editor_tabs
-		WHERE id = ?
+		WHERE id = $1
 	`, id).Scan(&t.ID, &t.BranchRepo, &t.BranchName, &t.Name, &t.Path, &viewStateJSON, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -106,4 +106,3 @@ func (s *TabStore) Get(id string) (*Tab, error) {
 	}
 	return &t, nil
 }
-

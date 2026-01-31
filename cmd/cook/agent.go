@@ -7,7 +7,6 @@ import (
 
 	"github.com/justinmoon/cook/internal/agent"
 	"github.com/justinmoon/cook/internal/config"
-	"github.com/justinmoon/cook/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +36,7 @@ func newAgentListCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -103,7 +102,7 @@ func newAgentShowCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -161,7 +160,7 @@ func newAgentKillCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}

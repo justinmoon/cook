@@ -8,10 +8,10 @@ import (
 
 	"github.com/justinmoon/cook/internal/branch"
 	"github.com/justinmoon/cook/internal/config"
-	"github.com/justinmoon/cook/internal/db"
 	"github.com/justinmoon/cook/internal/gate"
 	"github.com/justinmoon/cook/internal/repo"
 	"github.com/justinmoon/cook/internal/task"
+	"github.com/justinmoon/cook/internal/testutil"
 )
 
 // TestGUIWorkflow tests the complete GUI workflow:
@@ -24,12 +24,8 @@ func TestGUIWorkflow(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Initialize database
-	database, err := db.Open(tmpDir)
-	if err != nil {
-		t.Fatalf("failed to open database: %v", err)
-	}
-	defer database.Close()
+	database, cleanup := testutil.OpenTestDB(t)
+	defer cleanup()
 
 	// Create stores
 	owner := "testuser123"
@@ -248,11 +244,8 @@ func TestServerNew(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	database, err := db.Open(tmpDir)
-	if err != nil {
-		t.Fatalf("failed to open database: %v", err)
-	}
-	defer database.Close()
+	database, cleanup := testutil.OpenTestDB(t)
+	defer cleanup()
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{

@@ -10,7 +10,6 @@ import (
 	"github.com/justinmoon/cook/internal/agent"
 	"github.com/justinmoon/cook/internal/branch"
 	"github.com/justinmoon/cook/internal/config"
-	"github.com/justinmoon/cook/internal/db"
 	"github.com/justinmoon/cook/internal/events"
 	"github.com/justinmoon/cook/internal/gate"
 	"github.com/justinmoon/cook/internal/repo"
@@ -64,7 +63,7 @@ Agent types: claude, codex, opencode
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -273,7 +272,7 @@ func newBranchListCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -332,7 +331,7 @@ func newBranchShowCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -425,7 +424,7 @@ func newBranchMergeCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -609,7 +608,7 @@ func newBranchAbandonCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}

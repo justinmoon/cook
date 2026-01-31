@@ -138,7 +138,7 @@ kind = "human_approval"
 │                      cook server                            │
 ├─────────────────────────────────────────────────────────────┤
 │  Repos          Tasks         Branches       Environments   │
-│  (bare git)     (sqlite)      (sqlite)       (spawned)      │
+│  (bare git)     (postgres)    (postgres)     (spawned)      │
 ├─────────────────────────────────────────────────────────────┤
 │                     HTTP + WebSocket API                    │
 ├─────────────────────────────────────────────────────────────┤
@@ -173,54 +173,15 @@ Instances find each other over tailscale. The CLI resolves which server to talk 
 
 ### Database
 
-SQLite at `/var/lib/cook/cook.db`:
+PostgreSQL via `COOK_DATABASE_URL` (required for server/CLI operations).
 
-```sql
-CREATE TABLE tasks (
-    id TEXT PRIMARY KEY,
-    repo TEXT NOT NULL,
-    title TEXT NOT NULL,
-    body TEXT NOT NULL,
-    priority INTEGER DEFAULT 3,
-    status TEXT DEFAULT 'open',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+Example (local socket):
 
-CREATE TABLE branches (
-    name TEXT PRIMARY KEY,
-    repo TEXT NOT NULL,
-    task_id TEXT REFERENCES tasks(id),
-    base_rev TEXT NOT NULL,
-    head_rev TEXT NOT NULL,
-    environment_json TEXT NOT NULL,
-    status TEXT DEFAULT 'active',  -- active, merged, abandoned
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    merged_at DATETIME
-);
-
-CREATE TABLE gate_runs (
-    id INTEGER PRIMARY KEY,
-    branch TEXT NOT NULL REFERENCES branches(name),
-    gate_name TEXT NOT NULL,
-    rev TEXT NOT NULL,
-    status TEXT NOT NULL,  -- pending, running, passed, failed
-    started_at DATETIME,
-    finished_at DATETIME,
-    exit_code INTEGER,
-    log_path TEXT
-);
-
-CREATE TABLE agent_sessions (
-    id TEXT PRIMARY KEY,
-    branch TEXT NOT NULL REFERENCES branches(name),
-    agent TEXT NOT NULL,  -- claude, codex, opencode
-    status TEXT NOT NULL,  -- running, paused, completed, failed
-    environment_json TEXT NOT NULL,
-    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    ended_at DATETIME
-);
 ```
+postgresql:///cook?host=/run/postgresql
+```
+
+Schema is created on startup in `internal/db/db.go`.
 
 ## CLI Interface
 

@@ -2,12 +2,11 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"os"
+	"path/filepath"
 
 	"github.com/justinmoon/cook/internal/auth"
 	"github.com/justinmoon/cook/internal/config"
-	"github.com/justinmoon/cook/internal/db"
 	"github.com/spf13/cobra"
 )
 
@@ -67,7 +66,7 @@ The --pubkey flag specifies which nostr identity owns this key.`,
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -113,7 +112,7 @@ func newSSHKeyListCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -187,7 +186,7 @@ func newSSHKeyRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}

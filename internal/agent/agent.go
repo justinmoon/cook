@@ -60,19 +60,14 @@ func (s *Store) Create(session *Session) error {
 	session.StartedAt = time.Now()
 	session.Status = StatusStarting
 
-	result, err := s.db.Exec(`
+	err := s.db.QueryRow(`
 		INSERT INTO agent_sessions (branch_repo, branch_name, agent_type, prompt, status, started_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, session.BranchRepo, session.BranchName, session.AgentType, session.Prompt, session.Status, session.StartedAt)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`, session.BranchRepo, session.BranchName, session.AgentType, session.Prompt, session.Status, session.StartedAt).Scan(&session.ID)
 	if err != nil {
 		return err
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
-	}
-	session.ID = id
 
 	return nil
 }
@@ -80,8 +75,8 @@ func (s *Store) Create(session *Session) error {
 func (s *Store) Update(session *Session) error {
 	_, err := s.db.Exec(`
 		UPDATE agent_sessions 
-		SET status = ?, pid = ?, exit_code = ?, ended_at = ?
-		WHERE id = ?
+		SET status = $1, pid = $2, exit_code = $3, ended_at = $4
+		WHERE id = $5
 	`, session.Status, session.PID, session.ExitCode, session.EndedAt, session.ID)
 	return err
 }
@@ -89,7 +84,7 @@ func (s *Store) Update(session *Session) error {
 func (s *Store) Get(id int64) (*Session, error) {
 	row := s.db.QueryRow(`
 		SELECT id, branch_repo, branch_name, agent_type, prompt, status, pid, exit_code, started_at, ended_at
-		FROM agent_sessions WHERE id = ?
+		FROM agent_sessions WHERE id = $1
 	`, id)
 	return scanSession(row)
 }
@@ -98,7 +93,7 @@ func (s *Store) GetByBranch(repo, branchName string) (*Session, error) {
 	row := s.db.QueryRow(`
 		SELECT id, branch_repo, branch_name, agent_type, prompt, status, pid, exit_code, started_at, ended_at
 		FROM agent_sessions 
-		WHERE branch_repo = ? AND branch_name = ? AND status IN ('starting', 'running', 'needs_help')
+		WHERE branch_repo = $1 AND branch_name = $2 AND status IN ('starting', 'running', 'needs_help')
 		ORDER BY id DESC
 		LIMIT 1
 	`, repo, branchName)
@@ -111,7 +106,7 @@ func (s *Store) GetLatest(repo, branchName string) (*Session, error) {
 	row := s.db.QueryRow(`
 		SELECT id, branch_repo, branch_name, agent_type, prompt, status, pid, exit_code, started_at, ended_at
 		FROM agent_sessions 
-		WHERE branch_repo = ? AND branch_name = ?
+		WHERE branch_repo = $1 AND branch_name = $2
 		ORDER BY id DESC
 		LIMIT 1
 	`, repo, branchName)
@@ -126,11 +121,11 @@ func (s *Store) List(repo, branchName string) ([]Session, error) {
 	args := []interface{}{}
 
 	if repo != "" {
-		query += " AND branch_repo = ?"
+		query += fmt.Sprintf(" AND branch_repo = $%d", len(args)+1)
 		args = append(args, repo)
 	}
 	if branchName != "" {
-		query += " AND branch_name = ?"
+		query += fmt.Sprintf(" AND branch_name = $%d", len(args)+1)
 		args = append(args, branchName)
 	}
 
