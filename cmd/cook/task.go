@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/justinmoon/cook/internal/config"
-	"github.com/justinmoon/cook/internal/db"
 	"github.com/justinmoon/cook/internal/events"
 	"github.com/justinmoon/cook/internal/task"
 	"github.com/spf13/cobra"
@@ -38,7 +37,7 @@ func newTaskListCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -109,7 +108,7 @@ func newTaskCreateCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -173,7 +172,7 @@ func newTaskShowCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}
@@ -221,7 +220,7 @@ func newTaskCloseCmd() *cobra.Command {
 				return err
 			}
 
-			database, err := db.Open(cfg.Server.DataDir)
+			database, err := openDatabase(cfg)
 			if err != nil {
 				return err
 			}

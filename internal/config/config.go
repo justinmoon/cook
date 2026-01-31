@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -26,6 +27,7 @@ type ServerConfig struct {
 	Host           string   `toml:"host"`
 	Port           int      `toml:"port"`
 	DataDir        string   `toml:"data_dir"`
+	DatabaseURL    string   `toml:"database_url"`
 	NatsURL        string   `toml:"nats_url"`
 	Auth           string   `toml:"auth"`            // "none" or "nostr"
 	AllowedPubkeys []string `toml:"allowed_pubkeys"` // empty = allow all, otherwise whitelist
@@ -91,6 +93,16 @@ func Load() (*Config, error) {
 		cfg.Server.DataDir = dataDir
 	}
 
+	if dbURL := os.Getenv("COOK_DATABASE_URL"); dbURL != "" {
+		cfg.Server.DatabaseURL = dbURL
+	} else if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		cfg.Server.DatabaseURL = dbURL
+	}
+
+	if allowed := os.Getenv("COOK_ALLOWED_PUBKEYS"); allowed != "" {
+		cfg.Server.AllowedPubkeys = splitList(allowed)
+	}
+
 	if natsURL := os.Getenv("COOK_NATS_URL"); natsURL != "" {
 		cfg.Server.NatsURL = natsURL
 	}
@@ -129,6 +141,20 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func splitList(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\t'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func (c *Config) EnsureDataDir() error {

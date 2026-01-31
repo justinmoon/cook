@@ -49,15 +49,15 @@ func (s *SSHKeyStore) Add(pubkey, sshPubkey, name string) (*SSHKey, error) {
 		return nil, fmt.Errorf("SSH key already registered")
 	}
 
-	result, err := s.db.Exec(`
+	var id int64
+	err = s.db.QueryRow(`
 		INSERT INTO ssh_keys (pubkey, ssh_pubkey, fingerprint, name)
-		VALUES (?, ?, ?, ?)
-	`, pubkey, sshPubkey, fingerprint, name)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, pubkey, sshPubkey, fingerprint, name).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 
 	// Regenerate authorized_keys file
 	if err := s.regenerateAuthorizedKeys(); err != nil {
@@ -80,7 +80,7 @@ func (s *SSHKeyStore) List(pubkey string) ([]SSHKey, error) {
 	args := []interface{}{}
 
 	if pubkey != "" {
-		query += ` WHERE pubkey = ?`
+		query += fmt.Sprintf(" WHERE pubkey = $%d", len(args)+1)
 		args = append(args, pubkey)
 	}
 	query += ` ORDER BY created_at DESC`
@@ -110,7 +110,7 @@ func (s *SSHKeyStore) List(pubkey string) ([]SSHKey, error) {
 func (s *SSHKeyStore) GetByFingerprint(fingerprint string) (*SSHKey, error) {
 	row := s.db.QueryRow(`
 		SELECT id, pubkey, ssh_pubkey, fingerprint, name, created_at
-		FROM ssh_keys WHERE fingerprint = ?
+		FROM ssh_keys WHERE fingerprint = $1
 	`, fingerprint)
 
 	var key SSHKey
@@ -129,7 +129,7 @@ func (s *SSHKeyStore) GetByFingerprint(fingerprint string) (*SSHKey, error) {
 // Remove removes an SSH key by fingerprint
 func (s *SSHKeyStore) Remove(pubkey, fingerprint string) error {
 	result, err := s.db.Exec(`
-		DELETE FROM ssh_keys WHERE pubkey = ? AND fingerprint = ?
+		DELETE FROM ssh_keys WHERE pubkey = $1 AND fingerprint = $2
 	`, pubkey, fingerprint)
 	if err != nil {
 		return err

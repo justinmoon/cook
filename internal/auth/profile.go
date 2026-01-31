@@ -51,7 +51,7 @@ func NewProfileStore(database *db.DB) *ProfileStore {
 func (s *ProfileStore) Get(pubkey string) (*Profile, error) {
 	row := s.db.QueryRow(`
 		SELECT pubkey, name, picture, fetched_at
-		FROM profiles WHERE pubkey = ?
+		FROM profiles WHERE pubkey = $1
 	`, pubkey)
 
 	var profile Profile
@@ -85,8 +85,12 @@ func (s *ProfileStore) Get(pubkey string) (*Profile, error) {
 // Save saves a profile to the cache
 func (s *ProfileStore) Save(profile *Profile) error {
 	_, err := s.db.Exec(`
-		INSERT OR REPLACE INTO profiles (pubkey, name, picture, fetched_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO profiles (pubkey, name, picture, fetched_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (pubkey) DO UPDATE
+		SET name = EXCLUDED.name,
+			picture = EXCLUDED.picture,
+			fetched_at = EXCLUDED.fetched_at
 	`, profile.Pubkey, profile.Name, profile.Picture, profile.FetchedAt.Unix())
 	return err
 }

@@ -21,15 +21,14 @@ func NewStore(database *db.DB) *Store {
 }
 
 func (s *Store) Create(d *Dotfiles) error {
-	result, err := s.db.Exec(`
+	err := s.db.QueryRow(`
 		INSERT INTO dotfiles (pubkey, name, url)
-		VALUES (?, ?, ?)
-	`, d.Pubkey, d.Name, d.URL)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, d.Pubkey, d.Name, d.URL).Scan(&d.ID)
 	if err != nil {
 		return err
 	}
-	id, _ := result.LastInsertId()
-	d.ID = id
 	return nil
 }
 
@@ -37,7 +36,7 @@ func (s *Store) List(pubkey string) ([]Dotfiles, error) {
 	rows, err := s.db.Query(`
 		SELECT id, pubkey, name, url, created_at
 		FROM dotfiles
-		WHERE pubkey = ?
+		WHERE pubkey = $1
 		ORDER BY name ASC
 	`, pubkey)
 	if err != nil {
@@ -61,7 +60,7 @@ func (s *Store) Get(pubkey string, name string) (*Dotfiles, error) {
 	err := s.db.QueryRow(`
 		SELECT id, pubkey, name, url, created_at
 		FROM dotfiles
-		WHERE pubkey = ? AND name = ?
+		WHERE pubkey = $1 AND name = $2
 	`, pubkey, name).Scan(&d.ID, &d.Pubkey, &d.Name, &d.URL, &d.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -70,6 +69,6 @@ func (s *Store) Get(pubkey string, name string) (*Dotfiles, error) {
 }
 
 func (s *Store) Delete(pubkey string, name string) error {
-	_, err := s.db.Exec(`DELETE FROM dotfiles WHERE pubkey = ? AND name = ?`, pubkey, name)
+	_, err := s.db.Exec(`DELETE FROM dotfiles WHERE pubkey = $1 AND name = $2`, pubkey, name)
 	return err
 }

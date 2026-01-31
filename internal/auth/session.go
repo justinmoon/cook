@@ -46,7 +46,7 @@ func (s *SessionStore) Create(pubkey string) (*Session, error) {
 
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (id, pubkey, created_at, expires_at, last_accessed)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5)
 	`, sessionID, pubkey, now.Unix(), expiresAt.Unix(), now.Unix())
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (s *SessionStore) Create(pubkey string) (*Session, error) {
 func (s *SessionStore) Validate(sessionID string) (*Session, error) {
 	row := s.db.QueryRow(`
 		SELECT id, pubkey, created_at, expires_at, last_accessed
-		FROM sessions WHERE id = ?
+		FROM sessions WHERE id = $1
 	`, sessionID)
 
 	var session Session
@@ -90,7 +90,7 @@ func (s *SessionStore) Validate(sessionID string) (*Session, error) {
 
 	// Update last accessed time
 	now := time.Now()
-	s.db.Exec(`UPDATE sessions SET last_accessed = ? WHERE id = ?`, now.Unix(), sessionID)
+	s.db.Exec(`UPDATE sessions SET last_accessed = $1 WHERE id = $2`, now.Unix(), sessionID)
 	session.LastAccessed = now
 
 	return &session, nil
@@ -98,19 +98,19 @@ func (s *SessionStore) Validate(sessionID string) (*Session, error) {
 
 // Delete deletes a session
 func (s *SessionStore) Delete(sessionID string) error {
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = ?`, sessionID)
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE id = $1`, sessionID)
 	return err
 }
 
 // DeleteByPubkey deletes all sessions for a pubkey
 func (s *SessionStore) DeleteByPubkey(pubkey string) error {
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE pubkey = ?`, pubkey)
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE pubkey = $1`, pubkey)
 	return err
 }
 
 // CleanupExpired removes expired sessions
 func (s *SessionStore) CleanupExpired() error {
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().Unix())
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < $1`, time.Now().Unix())
 	return err
 }
 
@@ -118,7 +118,7 @@ func (s *SessionStore) CleanupExpired() error {
 func (s *SessionStore) ListByPubkey(pubkey string) ([]Session, error) {
 	rows, err := s.db.Query(`
 		SELECT id, pubkey, created_at, expires_at, last_accessed
-		FROM sessions WHERE pubkey = ?
+		FROM sessions WHERE pubkey = $1
 		ORDER BY created_at DESC
 	`, pubkey)
 	if err != nil {

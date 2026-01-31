@@ -30,7 +30,7 @@
             natscli
 
             # Database
-            sqlite
+            postgresql_17
 
             # Build tools
             gnumake

@@ -3,23 +3,31 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"path/filepath"
+	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type DB struct {
 	*sql.DB
 }
 
-func Open(dataDir string) (*DB, error) {
-	dbPath := filepath.Join(dataDir, "cook.db")
-	sqlDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=on")
+func Open(databaseURL string) (*DB, error) {
+	if strings.TrimSpace(databaseURL) == "" {
+		return nil, fmt.Errorf("COOK_DATABASE_URL is required")
+	}
+
+	sqlDB, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	db := &DB{sqlDB}
+
+	if err := sqlDB.Ping(); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
 
 	if err := db.migrate(); err != nil {
 		sqlDB.Close()
@@ -32,7 +40,14 @@ func Open(dataDir string) (*DB, error) {
 func (db *DB) migrate() error {
 	// Check if we need to migrate from old schema
 	var hasOldSchema bool
-	row := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tasks' AND sql LIKE '%id TEXT PRIMARY KEY%'`)
+	row := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'tasks'
+			AND column_name = 'id'
+			AND data_type = 'text'
+	`)
 	var count int
 	if err := row.Scan(&count); err == nil && count > 0 {
 		hasOldSchema = true
@@ -47,7 +62,7 @@ func (db *DB) migrate() error {
 	migrations := []string{
 		// Tasks: repo-scoped with slug
 		`CREATE TABLE IF NOT EXISTS tasks (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id BIGSERIAL PRIMARY KEY,
 			repo TEXT NOT NULL,
 			slug TEXT NOT NULL,
 			title TEXT NOT NULL,
@@ -55,14 +70,14 @@ func (db *DB) migrate() error {
 			priority INTEGER DEFAULT 3,
 			status TEXT DEFAULT 'open',
 			depends_on TEXT DEFAULT '[]',
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW(),
 			UNIQUE(repo, slug)
 		)`,
 
 		// Branches: repo-scoped with composite FK to tasks
 		`CREATE TABLE IF NOT EXISTS branches (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id BIGSERIAL PRIMARY KEY,
 			repo TEXT NOT NULL,
 			name TEXT NOT NULL,
 			task_repo TEXT,
@@ -71,22 +86,22 @@ func (db *DB) migrate() error {
 			head_rev TEXT NOT NULL,
 			environment_json TEXT NOT NULL DEFAULT '{}',
 			status TEXT DEFAULT 'active',
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			merged_at DATETIME,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			merged_at TIMESTAMPTZ,
 			UNIQUE(repo, name),
 			FOREIGN KEY (task_repo, task_slug) REFERENCES tasks(repo, slug)
 		)`,
 
 		// Gate runs: reference branches by (repo, name)
 		`CREATE TABLE IF NOT EXISTS gate_runs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id BIGSERIAL PRIMARY KEY,
 			branch_repo TEXT NOT NULL,
 			branch_name TEXT NOT NULL,
 			gate_name TEXT NOT NULL,
 			rev TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'pending',
-			started_at DATETIME,
-			finished_at DATETIME,
+			started_at TIMESTAMPTZ,
+			finished_at TIMESTAMPTZ,
 			exit_code INTEGER,
 			log_path TEXT,
 			FOREIGN KEY (branch_repo, branch_name) REFERENCES branches(repo, name)
@@ -94,7 +109,7 @@ func (db *DB) migrate() error {
 
 		// Agent sessions: reference branches by (repo, name)
 		`CREATE TABLE IF NOT EXISTS agent_sessions (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id BIGSERIAL PRIMARY KEY,
 			branch_repo TEXT NOT NULL,
 			branch_name TEXT NOT NULL,
 			agent_type TEXT NOT NULL,
@@ -102,8 +117,8 @@ func (db *DB) migrate() error {
 			status TEXT NOT NULL DEFAULT 'starting',
 			pid INTEGER,
 			exit_code INTEGER,
-			started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			ended_at DATETIME,
+			started_at TIMESTAMPTZ DEFAULT NOW(),
+			ended_at TIMESTAMPTZ,
 			FOREIGN KEY (branch_repo, branch_name) REFERENCES branches(repo, name)
 		)`,
 
@@ -118,19 +133,19 @@ func (db *DB) migrate() error {
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
 			pubkey TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			expires_at INTEGER NOT NULL,
-			last_accessed INTEGER
+			created_at BIGINT NOT NULL,
+			expires_at BIGINT NOT NULL,
+			last_accessed BIGINT
 		)`,
 
 		// Auth: SSH keys linked to nostr identity
 		`CREATE TABLE IF NOT EXISTS ssh_keys (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id BIGSERIAL PRIMARY KEY,
 			pubkey TEXT NOT NULL,
 			ssh_pubkey TEXT NOT NULL,
 			fingerprint TEXT NOT NULL,
 			name TEXT,
-			created_at INTEGER DEFAULT (unixepoch())
+			created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
 		)`,
 
 		// Auth: cached nostr profile metadata
@@ -138,7 +153,7 @@ func (db *DB) migrate() error {
 			pubkey TEXT PRIMARY KEY,
 			name TEXT,
 			picture TEXT,
-			fetched_at INTEGER
+			fetched_at BIGINT
 		)`,
 
 		`CREATE INDEX IF NOT EXISTS idx_sessions_pubkey ON sessions(pubkey)`,
@@ -152,7 +167,7 @@ func (db *DB) migrate() error {
 			branch_repo TEXT NOT NULL,
 			branch_name TEXT NOT NULL,
 			name TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
 			FOREIGN KEY (branch_repo, branch_name) REFERENCES branches(repo, name) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_terminal_tabs_branch ON terminal_tabs(branch_repo, branch_name)`,
@@ -166,7 +181,7 @@ func (db *DB) migrate() error {
 			current_url TEXT NOT NULL DEFAULT '',
 			history_json TEXT NOT NULL DEFAULT '[]',
 			history_index INTEGER NOT NULL DEFAULT -1,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
 			FOREIGN KEY (branch_repo, branch_name) REFERENCES branches(repo, name) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_preview_tabs_branch ON preview_tabs(branch_repo, branch_name)`,
@@ -179,18 +194,18 @@ func (db *DB) migrate() error {
 			name TEXT NOT NULL,
 			path TEXT NOT NULL DEFAULT '',
 			view_state_json TEXT NOT NULL DEFAULT '{}',
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
 			FOREIGN KEY (branch_repo, branch_name) REFERENCES branches(repo, name) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_editor_tabs_branch ON editor_tabs(branch_repo, branch_name)`,
 
 		// Dotfiles: user's saved dotfiles repos
 		`CREATE TABLE IF NOT EXISTS dotfiles (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id BIGSERIAL PRIMARY KEY,
 			pubkey TEXT NOT NULL,
 			name TEXT NOT NULL,
 			url TEXT NOT NULL,
-			created_at INTEGER DEFAULT (unixepoch()),
+			created_at BIGINT DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
 			UNIQUE(pubkey, name)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_dotfiles_pubkey ON dotfiles(pubkey)`,
@@ -234,16 +249,19 @@ func (db *DB) migrateToRepoScoped() error {
 // MigrateData migrates data from old tables to new (call after schema migration)
 func (db *DB) MigrateData() error {
 	// Check if old tables exist
-	var hasOld int
-	db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tasks_old'`).Scan(&hasOld)
-	if hasOld == 0 {
+	var oldTable sql.NullString
+	if err := db.QueryRow(`SELECT to_regclass('public.tasks_old')`).Scan(&oldTable); err != nil {
+		return err
+	}
+	if !oldTable.Valid {
 		return nil // No migration needed
 	}
 
 	// Migrate tasks: id becomes slug
 	_, err := db.Exec(`
-		INSERT OR IGNORE INTO tasks (repo, slug, title, body, priority, status, depends_on, created_at, updated_at)
+		INSERT INTO tasks (repo, slug, title, body, priority, status, depends_on, created_at, updated_at)
 		SELECT repo, id, title, body, priority, status, depends_on, created_at, updated_at FROM tasks_old
+		ON CONFLICT DO NOTHING
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate tasks: %w", err)
@@ -251,10 +269,11 @@ func (db *DB) MigrateData() error {
 
 	// Migrate branches: name stays, add task_repo/task_slug from task_id
 	_, err = db.Exec(`
-		INSERT OR IGNORE INTO branches (repo, name, task_repo, task_slug, base_rev, head_rev, environment_json, status, created_at, merged_at)
+		INSERT INTO branches (repo, name, task_repo, task_slug, base_rev, head_rev, environment_json, status, created_at, merged_at)
 		SELECT b.repo, b.name, t.repo, t.id, b.base_rev, b.head_rev, b.environment_json, b.status, b.created_at, b.merged_at
 		FROM branches_old b
 		LEFT JOIN tasks_old t ON b.task_id = t.id
+		ON CONFLICT DO NOTHING
 	`)
 	if err != nil {
 		return fmt.Errorf("migrate branches: %w", err)
@@ -262,7 +281,7 @@ func (db *DB) MigrateData() error {
 
 	// Migrate gate_runs: branch becomes branch_repo/branch_name
 	_, err = db.Exec(`
-		INSERT OR IGNORE INTO gate_runs (branch_repo, branch_name, gate_name, rev, status, started_at, finished_at, exit_code, log_path)
+		INSERT INTO gate_runs (branch_repo, branch_name, gate_name, rev, status, started_at, finished_at, exit_code, log_path)
 		SELECT b.repo, b.name, g.gate_name, g.rev, g.status, g.started_at, g.finished_at, g.exit_code, g.log_path
 		FROM gate_runs_old g
 		JOIN branches_old b ON g.branch = b.name
@@ -273,7 +292,7 @@ func (db *DB) MigrateData() error {
 
 	// Migrate agent_sessions
 	_, err = db.Exec(`
-		INSERT OR IGNORE INTO agent_sessions (branch_repo, branch_name, agent_type, prompt, status, pid, exit_code, started_at, ended_at)
+		INSERT INTO agent_sessions (branch_repo, branch_name, agent_type, prompt, status, pid, exit_code, started_at, ended_at)
 		SELECT b.repo, b.name, a.agent_type, a.prompt, a.status, a.pid, a.exit_code, a.started_at, a.ended_at
 		FROM agent_sessions_old a
 		JOIN branches_old b ON a.branch = b.name

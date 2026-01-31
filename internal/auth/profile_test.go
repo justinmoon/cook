@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/justinmoon/cook/internal/db"
+	"github.com/justinmoon/cook/internal/testutil"
 )
 
 // TestFetchRealProfile tests fetching a real profile from nostr relays
@@ -14,11 +14,8 @@ func TestFetchRealProfile(t *testing.T) {
 	pubkey := "32e1827635450ebb3c5a7d12c1f8e7b2b514439ac10a67eef3d9fd9c5c68e245"
 
 	// Create temp DB
-	database, err := db.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer database.Close()
+	database, cleanup := testutil.OpenTestDB(t)
+	defer cleanup()
 
 	store := NewProfileStore(database)
 
