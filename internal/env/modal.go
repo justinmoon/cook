@@ -82,6 +82,7 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 	// Create sandbox with pre-built image (tools already installed via nix)
 	image := b.client.Images.FromRegistry("ghcr.io/justinmoon/cook-sandbox:latest", nil)
 
+	start := time.Now()
 	fmt.Printf("Creating Modal sandbox...\n")
 	sandbox, err := b.client.Sandboxes.Create(ctx, app, image, &modal.SandboxCreateParams{
 		// Add environment variables
@@ -100,22 +101,28 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 	}
 	b.sandbox = sandbox
 	b.sandboxID = sandbox.SandboxID
-	fmt.Printf("Modal sandbox created: %s\n", b.sandboxID)
+	fmt.Printf("Modal sandbox created: %s (took %v)\n", b.sandboxID, time.Since(start))
 
 	// Create workspace directory
+	start = time.Now()
 	if _, err := b.Exec(ctx, "mkdir -p "+b.workDir); err != nil {
 		return fmt.Errorf("failed to create workspace: %w", err)
 	}
+	fmt.Printf("Created workspace (took %v)\n", time.Since(start))
 
 	// Clone the repo
+	start = time.Now()
 	if err := b.cloneRepo(ctx); err != nil {
 		return fmt.Errorf("failed to clone repo: %w", err)
 	}
+	fmt.Printf("Cloned repo (took %v)\n", time.Since(start))
 
 	// Copy and start cook-agent
+	start = time.Now()
 	if err := b.setupAgent(ctx); err != nil {
 		return fmt.Errorf("failed to setup agent: %w", err)
 	}
+	fmt.Printf("Setup agent (took %v)\n", time.Since(start))
 
 	// Copy Claude auth if available
 	if err := b.copyClaudeAuth(ctx); err != nil {
