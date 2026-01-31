@@ -79,9 +79,8 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 	}
 	b.app = app
 
-	// Create sandbox with a base image that has basic tools
-	// Using debian:bookworm-slim as base, we'll install tools inside
-	image := b.client.Images.FromRegistry("node:20-slim", nil)
+	// Create sandbox with pre-built image (tools already installed via nix)
+	image := b.client.Images.FromRegistry("ghcr.io/justinmoon/cook-sandbox:latest", nil)
 
 	fmt.Printf("Creating Modal sandbox...\n")
 	sandbox, err := b.client.Sandboxes.Create(ctx, app, image, &modal.SandboxCreateParams{
@@ -102,12 +101,6 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 	b.sandbox = sandbox
 	b.sandboxID = sandbox.SandboxID
 	fmt.Printf("Modal sandbox created: %s\n", b.sandboxID)
-
-	// Install basic tools
-	fmt.Printf("Installing tools in sandbox...\n")
-	if err := b.installTools(ctx); err != nil {
-		return fmt.Errorf("failed to install tools: %w", err)
-	}
 
 	// Create workspace directory
 	if _, err := b.Exec(ctx, "mkdir -p "+b.workDir); err != nil {
