@@ -39,8 +39,11 @@ pkgs.dockerTools.buildLayeredImage {
     # Networking
     netcat-gnu
     
-    # Node.js (for claude-code)
+    # Node.js
     nodejs_20
+    
+    # Claude Code CLI
+    claude-code
     
     # CA certificates for HTTPS
     cacert

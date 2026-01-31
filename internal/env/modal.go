@@ -102,12 +102,6 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 	b.sandboxID = sandbox.SandboxID
 	fmt.Printf("Modal sandbox created: %s\n", b.sandboxID)
 
-	// Install claude-code (not in nix image yet)
-	fmt.Printf("Installing claude-code...\n")
-	if _, err := b.Exec(ctx, "npm install -g @anthropic-ai/claude-code"); err != nil {
-		return fmt.Errorf("failed to install claude-code: %w", err)
-	}
-
 	// Create workspace directory
 	if _, err := b.Exec(ctx, "mkdir -p "+b.workDir); err != nil {
 		return fmt.Errorf("failed to create workspace: %w", err)
