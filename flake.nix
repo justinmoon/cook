@@ -64,7 +64,10 @@
 
         # Sandbox image for Modal/Docker (must be built on x86_64-linux)
         packages.sandbox-image = import ./nix/sandbox-image.nix {
-          pkgs = import nixpkgs { system = "x86_64-linux"; };
+          pkgs = import nixpkgs { 
+            system = "x86_64-linux"; 
+            config.allowUnfree = true;
+          };
         };
       }
     );

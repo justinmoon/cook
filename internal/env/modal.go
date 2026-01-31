@@ -80,7 +80,7 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 	b.app = app
 
 	// Create sandbox with pre-built image (tools already installed via nix)
-	image := b.client.Images.FromRegistry("ghcr.io/justinmoon/cook-sandbox:latest", nil)
+	image := b.client.Images.FromRegistry("ghcr.io/justinmoon/cook-sandbox:v3", nil)
 
 	start := time.Now()
 	fmt.Printf("Creating Modal sandbox...\n")
@@ -164,48 +164,8 @@ func (b *ModalBackend) cloneRepo(ctx context.Context) error {
 }
 
 func (b *ModalBackend) setupAgent(ctx context.Context) error {
-	// Find cook-agent binary on host
-	agentPath, err := findAgentBinary()
-	if err != nil {
-		return fmt.Errorf("cook-agent binary not found: %w", err)
-	}
-
-	// Read the binary
-	agentData, err := os.ReadFile(agentPath)
-	if err != nil {
-		return fmt.Errorf("failed to read cook-agent: %w", err)
-	}
-
-	// Write to sandbox via base64 encoding (simplest approach)
-	encoded := encodeBase64(agentData)
-	
-	// Write in chunks to avoid command line limits
-	chunkSize := 50000
-	tmpPath := "/tmp/cook-agent.b64"
-	
-	// Clear the file first
-	b.Exec(ctx, fmt.Sprintf("rm -f %s", tmpPath))
-	
-	for i := 0; i < len(encoded); i += chunkSize {
-		end := i + chunkSize
-		if end > len(encoded) {
-			end = len(encoded)
-		}
-		chunk := encoded[i:end]
-		_, err := b.Exec(ctx, fmt.Sprintf("echo -n '%s' >> %s", chunk, tmpPath))
-		if err != nil {
-			return fmt.Errorf("failed to write agent chunk: %w", err)
-		}
-	}
-
-	// Decode and make executable
-	_, err = b.Exec(ctx, fmt.Sprintf("base64 -d %s > /tmp/cook-agent && chmod +x /tmp/cook-agent && rm %s", tmpPath, tmpPath))
-	if err != nil {
-		return fmt.Errorf("failed to decode agent: %w", err)
-	}
-
-	// Start the agent
-	_, err = b.Exec(ctx, "nohup /tmp/cook-agent > /tmp/cook-agent.log 2>&1 &")
+	// cook-agent is pre-installed in the nix image, just start it
+	_, err := b.Exec(ctx, "nohup cook-agent > /tmp/cook-agent.log 2>&1 &")
 	if err != nil {
 		return fmt.Errorf("failed to start agent: %w", err)
 	}
