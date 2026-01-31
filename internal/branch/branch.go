@@ -57,6 +57,14 @@ func (b *Branch) Backend() (env.Backend, error) {
 		return env.NewDockerBackendFromContainerID(b.Environment.ContainerID, b.Environment.Path)
 	}
 
+	// For Modal backend, reconnect using sandbox ID
+	if b.Environment.Backend == "modal" {
+		if b.Environment.SandboxID == "" {
+			return nil, fmt.Errorf("modal backend has no sandbox ID")
+		}
+		return env.NewModalBackendFromSandbox(b.Environment.SandboxID, b.Environment.Path)
+	}
+
 	cfg := env.Config{
 		WorkDir:  b.Environment.Path,
 		Dotfiles: b.Environment.Dotfiles,
@@ -70,6 +78,7 @@ type EnvironmentSpec struct {
 	Image       string `json:"image,omitempty"`        // docker image (optional)
 	Dotfiles    string `json:"dotfiles,omitempty"`     // git URL for dotfiles repo (optional)
 	ContainerID string `json:"container_id,omitempty"` // docker container ID
+	SandboxID   string `json:"sandbox_id,omitempty"`   // modal sandbox ID
 }
 
 const (
@@ -240,8 +249,64 @@ func (s *Store) CreateWithDockerCheckout(b *Branch, bareRepoPath string, dotfile
 	return nil
 }
 
+// CreateWithModalCheckout creates a branch with a Modal sandbox environment
+func (s *Store) CreateWithModalCheckout(b *Branch, bareRepoPath string, dotfiles string) error {
+	// Validate branch name
+	if strings.Contains(b.Name, "/") {
+		return fmt.Errorf("branch name cannot contain '/'")
+	}
+
+	// Get base rev from master
+	baseRev, err := getHeadRev(bareRepoPath, "master")
+	if err != nil {
+		return fmt.Errorf("failed to get master HEAD: %w (does the repo have commits?)", err)
+	}
+	b.BaseRev = baseRev
+	b.HeadRev = baseRev
+
+	// Create a "virtual" path - Modal doesn't use host filesystem
+	checkoutPath := filepath.Join(s.dataDir, "checkouts", b.Repo, b.Name)
+
+	// Create Modal backend config
+	sandboxName := strings.ReplaceAll(b.Repo, "/", "-") + "-" + b.Name
+	cfg := env.Config{
+		Name:       sandboxName,
+		RepoURL:    bareRepoPath,
+		BranchName: b.Name,
+		WorkDir:    checkoutPath,
+		Dotfiles:   dotfiles,
+	}
+
+	backend, err := env.NewModalBackend(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create modal backend: %w", err)
+	}
+
+	// Setup the sandbox (this clones repo, starts cook-agent, sets up dotfiles)
+	if err := backend.Setup(context.Background()); err != nil {
+		backend.Teardown(context.Background())
+		return fmt.Errorf("failed to setup modal environment: %w", err)
+	}
+
+	b.Environment = EnvironmentSpec{
+		Backend:   "modal",
+		Path:      checkoutPath,
+		Dotfiles:  dotfiles,
+		SandboxID: backend.SandboxID(),
+	}
+	b.Status = StatusActive
+
+	// Save to DB
+	if err := s.Create(b); err != nil {
+		backend.Teardown(context.Background())
+		return err
+	}
+
+	return nil
+}
+
 // RemoveCheckout removes the checkout directory for a branch.
-// For Docker branches, this also tears down the container.
+// For Docker/Modal branches, this also tears down the container/sandbox.
 func (s *Store) RemoveCheckout(b *Branch) error {
 	if b.Environment.Path == "" {
 		return nil
@@ -255,8 +320,19 @@ func (s *Store) RemoveCheckout(b *Branch) error {
 		}
 	}
 
-	// Remove the directory
-	return os.RemoveAll(b.Environment.Path)
+	// For Modal backend, teardown the sandbox
+	if b.Environment.Backend == "modal" && b.Environment.SandboxID != "" {
+		backend, err := b.Backend()
+		if err == nil {
+			backend.Teardown(context.Background())
+		}
+	}
+
+	// Remove the directory (for local/docker) - Modal doesn't have local files
+	if b.Environment.Backend != "modal" {
+		return os.RemoveAll(b.Environment.Path)
+	}
+	return nil
 }
 
 

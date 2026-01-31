@@ -96,9 +96,9 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For Docker backend, use cook-agent protocol
-	if b.Environment.Backend == "docker" {
-		s.handleDockerTerminalWS(w, r, b, sessionKey, isAgentSession, initialRows, initialCols)
+	// For Docker and Modal backends, use cook-agent protocol
+	if b.Environment.Backend == "docker" || b.Environment.Backend == "modal" {
+		s.handleRemoteTerminalWS(w, r, b, sessionKey, isAgentSession, initialRows, initialCols)
 		return
 	}
 
@@ -231,16 +231,26 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 // StartTerminalSession is no longer needed - PTY is created on WebSocket connect
 
-// handleDockerTerminalWS handles terminal connections for Docker backends via cook-agent
-func (s *Server) handleDockerTerminalWS(w http.ResponseWriter, r *http.Request, b *branch.Branch, sessionKey string, isAgentSession bool, initialRows, initialCols uint16) {
-	// Get the Docker backend to find agent address
+// handleRemoteTerminalWS handles terminal connections for Docker/Modal backends via cook-agent
+func (s *Server) handleRemoteTerminalWS(w http.ResponseWriter, r *http.Request, b *branch.Branch, sessionKey string, isAgentSession bool, initialRows, initialCols uint16) {
+	// Get the backend to find agent address
 	backend, err := b.Backend()
 	if err != nil {
 		http.Error(w, "Failed to get backend: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	dockerBackend := backend.(*env.DockerBackend)
-	agentAddr := dockerBackend.AgentAddr()
+
+	// Get agent address from backend (works for both Docker and Modal)
+	var agentAddr string
+	switch be := backend.(type) {
+	case *env.DockerBackend:
+		agentAddr = be.AgentAddr()
+	case *env.ModalBackend:
+		agentAddr = be.AgentAddr()
+	default:
+		http.Error(w, "Backend does not support cook-agent", http.StatusBadRequest)
+		return
+	}
 
 	// Connect to cook-agent
 	agentClient, err := envagent.Dial(agentAddr)

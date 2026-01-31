@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"sync"
@@ -16,10 +16,14 @@ import (
 	"unsafe"
 
 	"github.com/creack/pty"
+	"github.com/gorilla/websocket"
 )
 
 var (
 	listenAddr = flag.String("listen", ":7422", "address to listen on")
+	upgrader   = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
 )
 
 func main() {
@@ -27,21 +31,18 @@ func main() {
 
 	mgr := NewSessionManager()
 
-	listener, err := net.Listen("tcp", *listenAddr)
-	if err != nil {
-		log.Fatalf("Failed to listen on %s: %v", *listenAddr, err)
-	}
-	defer listener.Close()
-
-	log.Printf("cook-agent listening on %s", *listenAddr)
-
-	for {
-		conn, err := listener.Accept()
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("Accept error: %v", err)
-			continue
+			log.Printf("WebSocket upgrade error: %v", err)
+			return
 		}
-		go handleConnection(conn, mgr)
+		handleConnection(conn, mgr)
+	})
+
+	log.Printf("cook-agent listening on %s (WebSocket)", *listenAddr)
+	if err := http.ListenAndServe(*listenAddr, nil); err != nil {
+		log.Fatalf("Failed to listen on %s: %v", *listenAddr, err)
 	}
 }
 
@@ -79,17 +80,17 @@ type Session struct {
 	Pty     *os.File
 
 	mu        sync.Mutex
-	clients   map[net.Conn]bool
+	clients   map[*websocket.Conn]bool
 	closeOnce sync.Once
 }
 
-func (s *Session) AddClient(conn net.Conn) {
+func (s *Session) AddClient(conn *websocket.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clients[conn] = true
 }
 
-func (s *Session) RemoveClient(conn net.Conn) {
+func (s *Session) RemoveClient(conn *websocket.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.clients, conn)
@@ -101,10 +102,9 @@ func (s *Session) Broadcast(data []byte) {
 
 	msg := Message{Type: MsgOutput, SessionID: s.ID, Data: data}
 	encoded, _ := json.Marshal(msg)
-	encoded = append(encoded, '\n')
 
 	for conn := range s.clients {
-		conn.Write(encoded)
+		conn.WriteMessage(websocket.TextMessage, encoded)
 	}
 }
 
@@ -165,7 +165,7 @@ func (m *SessionManager) Create(id, command, workDir string) (*Session, error) {
 		WorkDir: workDir,
 		Cmd:     cmd,
 		Pty:     ptmx,
-		clients: make(map[net.Conn]bool),
+		clients: make(map[*websocket.Conn]bool),
 	}
 
 	m.sessions[id] = session
@@ -214,19 +214,24 @@ func (m *SessionManager) List() []string {
 	return ids
 }
 
-func handleConnection(conn net.Conn, mgr *SessionManager) {
+func handleConnection(conn *websocket.Conn, mgr *SessionManager) {
 	defer conn.Close()
 
-	decoder := json.NewDecoder(conn)
 	var attachedSession *Session
 
 	for {
-		var msg Message
-		if err := decoder.Decode(&msg); err != nil {
-			if err != io.EOF {
-				log.Printf("Decode error: %v", err)
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("WebSocket error: %v", err)
 			}
 			break
+		}
+
+		var msg Message
+		if err := json.Unmarshal(data, &msg); err != nil {
+			log.Printf("JSON decode error: %v", err)
+			continue
 		}
 
 		switch msg.Type {
@@ -285,20 +290,20 @@ func handleConnection(conn net.Conn, mgr *SessionManager) {
 	}
 }
 
-func sendError(conn net.Conn, errMsg string) {
+func sendError(conn *websocket.Conn, errMsg string) {
 	msg := Message{Type: MsgError, Error: errMsg}
 	encoded, _ := json.Marshal(msg)
-	conn.Write(append(encoded, '\n'))
+	conn.WriteMessage(websocket.TextMessage, encoded)
 }
 
-func sendOK(conn net.Conn, sessionID string) {
+func sendOK(conn *websocket.Conn, sessionID string) {
 	msg := Message{Type: MsgOK, SessionID: sessionID}
 	encoded, _ := json.Marshal(msg)
-	conn.Write(append(encoded, '\n'))
+	conn.WriteMessage(websocket.TextMessage, encoded)
 }
 
-func sendList(conn net.Conn, sessions []string) {
+func sendList(conn *websocket.Conn, sessions []string) {
 	msg := Message{Type: MsgList, Sessions: sessions}
 	encoded, _ := json.Marshal(msg)
-	conn.Write(append(encoded, '\n'))
+	conn.WriteMessage(websocket.TextMessage, encoded)
 }

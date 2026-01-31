@@ -506,6 +506,7 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 	name := r.FormValue("name")
 	taskSlug := r.FormValue("task_slug")
 	dotfiles := r.FormValue("dotfiles")
+	backendType := r.FormValue("backend")
 
 	if name == "" {
 		http.Error(w, "Branch name is required", http.StatusBadRequest)
@@ -530,10 +531,23 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 		b.TaskSlug = &taskSlug
 	}
 
-	// Create branch with checkout
-	if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	// Create branch with appropriate backend
+	switch backendType {
+	case "docker":
+		if err := branchStore.CreateWithDockerCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "modal":
+		if err := branchStore.CreateWithModalCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	default:
+		if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// If linked to a task, set task to in_progress
@@ -772,7 +786,7 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent type", http.StatusBadRequest)
 		return
 	}
-	if backendType != "local" && backendType != "docker" {
+	if backendType != "local" && backendType != "docker" && backendType != "modal" {
 		http.Error(w, "Invalid backend type", http.StatusBadRequest)
 		return
 	}
@@ -817,12 +831,18 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create with appropriate backend
-	if backendType == "docker" {
+	switch backendType {
+	case "docker":
 		if err := branchStore.CreateWithDockerCheckout(b, rp.Path, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-	} else {
+	case "modal":
+		if err := branchStore.CreateWithModalCheckout(b, rp.Path, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	default:
 		if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -832,9 +852,23 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	// Write TASK.md with task description
 	taskMdContent := fmt.Sprintf("# %s\n\n%s\n", t.Title, t.Body)
 	taskMdPath := filepath.Join(b.Environment.Path, "TASK.md")
-	if err := os.WriteFile(taskMdPath, []byte(taskMdContent), 0644); err != nil {
-		http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
-		return
+	if backendType == "modal" || backendType == "docker" {
+		// For remote backends, write via the backend
+		backend, err := b.Backend()
+		if err != nil {
+			http.Error(w, "Failed to get backend: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := backend.WriteFile(r.Context(), taskMdPath, []byte(taskMdContent)); err != nil {
+			http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// For local backend, write directly
+		if err := os.WriteFile(taskMdPath, []byte(taskMdContent), 0644); err != nil {
+			http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Create agent session record

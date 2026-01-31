@@ -3,12 +3,12 @@
 package envagent
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net"
+	"strings"
 	"sync"
+
+	"github.com/gorilla/websocket"
 )
 
 // Message types - must match cook-agent
@@ -37,24 +37,37 @@ type Message struct {
 	Sessions  []string `json:"sessions,omitempty"`
 }
 
-// Client connects to a cook-agent instance
+// Client connects to a cook-agent instance via WebSocket
 type Client struct {
-	conn     net.Conn
+	conn     *websocket.Conn
 	mu       sync.Mutex
-	reader   *bufio.Reader
 	onOutput func(sessionID string, data []byte)
 }
 
-// Dial connects to a cook-agent at the given address
+// Dial connects to a cook-agent at the given address.
+// The address can be:
+//   - "host:port" (converted to ws://host:port)
+//   - "ws://..." or "wss://..." (used as-is)
+//   - "https://..." (converted to wss://...)
 func Dial(addr string) (*Client, error) {
-	conn, err := net.Dial("tcp", addr)
+	// Convert address to WebSocket URL
+	wsURL := addr
+	if strings.HasPrefix(addr, "https://") {
+		wsURL = "wss://" + strings.TrimPrefix(addr, "https://")
+	} else if strings.HasPrefix(addr, "http://") {
+		wsURL = "ws://" + strings.TrimPrefix(addr, "http://")
+	} else if !strings.HasPrefix(addr, "ws://") && !strings.HasPrefix(addr, "wss://") {
+		// Assume host:port format
+		wsURL = "ws://" + addr
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to cook-agent: %w", err)
+		return nil, fmt.Errorf("failed to connect to cook-agent at %s: %w", wsURL, err)
 	}
 
 	c := &Client{
-		conn:   conn,
-		reader: bufio.NewReader(conn),
+		conn: conn,
 	}
 
 	return c, nil
@@ -81,21 +94,19 @@ func (c *Client) send(msg Message) error {
 	if err != nil {
 		return err
 	}
-	encoded = append(encoded, '\n')
 
-	_, err = c.conn.Write(encoded)
-	return err
+	return c.conn.WriteMessage(websocket.TextMessage, encoded)
 }
 
 // readMessage reads and parses a single message
 func (c *Client) readMessage() (*Message, error) {
-	line, err := c.reader.ReadBytes('\n')
+	_, data, err := c.conn.ReadMessage()
 	if err != nil {
 		return nil, err
 	}
 
 	var msg Message
-	if err := json.Unmarshal(line, &msg); err != nil {
+	if err := json.Unmarshal(data, &msg); err != nil {
 		return nil, err
 	}
 
@@ -189,7 +200,8 @@ func (c *Client) ReadLoop() error {
 	for {
 		msg, err := c.readMessage()
 		if err != nil {
-			if err == io.EOF {
+			// WebSocket close is not an error
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				return nil
 			}
 			return err
@@ -205,9 +217,4 @@ func (c *Client) ReadLoop() error {
 			}
 		}
 	}
-}
-
-// Conn returns the underlying connection for advanced use cases
-func (c *Client) Conn() net.Conn {
-	return c.conn
 }

@@ -283,10 +283,11 @@ func findAgentBinary() (string, error) {
 	candidates := []string{
 		// Same directory as current executable
 		filepath.Join(filepath.Dir(os.Args[0]), "cook-agent"),
-		// Development path
-		"./cmd/cook-agent/cook-agent",
-		// Built binary in current dir
+		// Development path (from project root)
 		"./cook-agent",
+		"./cmd/cook-agent/cook-agent",
+		// Development path (from internal/env during tests)
+		"../../cook-agent",
 		// System path
 		"/usr/local/bin/cook-agent",
 	}
