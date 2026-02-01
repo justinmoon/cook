@@ -94,6 +94,14 @@ func (s *Server) getCSRFToken(r *http.Request) string {
 	return ""
 }
 
+func (s *Server) repoCloneURL(owner, name string) (string, error) {
+	base := strings.TrimRight(s.cfg.Server.PublicURL, "/")
+	if base == "" {
+		return "", fmt.Errorf("COOK_PUBLIC_URL not set; run `expose %d` and set COOK_PUBLIC_URL to the public URL", s.cfg.Server.Port)
+	}
+	return fmt.Sprintf("%s/git/%s/%s.git", base, owner, name), nil
+}
+
 //go:embed templates/*
 var templatesFS embed.FS
 
@@ -539,7 +547,32 @@ func (s *Server) handleRepoBranchCreate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	case "modal":
-		if err := branchStore.CreateWithModalCheckout(b, rp.Path, dotfiles); err != nil {
+		repoURL, err := s.repoCloneURL(owner, repoName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := branchStore.CreateWithModalCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "sprites":
+		repoURL, err := s.repoCloneURL(owner, repoName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := branchStore.CreateWithSpritesCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "fly-machines":
+		repoURL, err := s.repoCloneURL(owner, repoName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := branchStore.CreateWithFlyMachinesCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -600,6 +633,12 @@ func (s *Server) handleRepoDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	activeBranches := make(map[string]branch.Branch)
+	for _, b := range branches {
+		if b.Status == branch.StatusActive {
+			activeBranches[b.Name] = b
+		}
+	}
 
 	taskStore := task.NewStore(s.db)
 	tasks, err := taskStore.List(repoRef, "")
@@ -614,6 +653,7 @@ func (s *Server) handleRepoDetail(w http.ResponseWriter, r *http.Request) {
 	data := s.baseTemplateData(r, rp.FullName())
 	data["Repo"] = rp
 	data["Branches"] = branches
+	data["ActiveBranches"] = activeBranches
 	data["Tasks"] = tasks
 	data["Commits"] = commits
 	// Check if current user owns this repo
@@ -786,7 +826,7 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent type", http.StatusBadRequest)
 		return
 	}
-	if backendType != "local" && backendType != "docker" && backendType != "modal" {
+	if backendType != "local" && backendType != "docker" && backendType != "modal" && backendType != "sprites" && backendType != "fly-machines" {
 		http.Error(w, "Invalid backend type", http.StatusBadRequest)
 		return
 	}
@@ -838,7 +878,32 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "modal":
-		if err := branchStore.CreateWithModalCheckout(b, rp.Path, dotfiles); err != nil {
+		repoURL, err := s.repoCloneURL(owner, repoName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := branchStore.CreateWithModalCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "sprites":
+		repoURL, err := s.repoCloneURL(owner, repoName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := branchStore.CreateWithSpritesCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "fly-machines":
+		repoURL, err := s.repoCloneURL(owner, repoName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := branchStore.CreateWithFlyMachinesCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -852,7 +917,7 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	// Write TASK.md with task description
 	taskMdContent := fmt.Sprintf("# %s\n\n%s\n", t.Title, t.Body)
 	taskMdPath := filepath.Join(b.Environment.Path, "TASK.md")
-	if backendType == "modal" || backendType == "docker" {
+	if backendType == "modal" || backendType == "docker" || backendType == "sprites" || backendType == "fly-machines" {
 		// For remote backends, write via the backend
 		backend, err := b.Backend()
 		if err != nil {
@@ -881,6 +946,13 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := agentStore.Create(session); err != nil {
 		http.Error(w, "Failed to create agent session: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if backendType != "local" {
+		// Remote backends start the agent when the terminal websocket connects.
+		taskStore.UpdateStatus(repoRef, slug, task.StatusInProgress)
+		http.Redirect(w, r, "/branches/"+owner+"/"+repoName+"/"+slug, http.StatusSeeOther)
 		return
 	}
 
@@ -925,6 +997,14 @@ func (s *Server) handleBranchDetail(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	repoRef := owner + "/" + repoName
 
+	// Get repo for bare repo path
+	repoStore := repo.NewStore(s.cfg.Server.DataDir)
+	rp, err := repoStore.Get(owner, repoName)
+	if err != nil || rp == nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
 	branchStore := branch.NewStore(s.db, s.cfg.Server.DataDir)
 	b, err := branchStore.Get(repoRef, name)
 	if err != nil {
@@ -937,9 +1017,16 @@ func (s *Server) handleBranchDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get current HEAD of checkout for staleness check
+	// For remote backends (sprites, modal, fly-machines), use HeadRev from database
 	var currentHead string
 	if b.Environment.Path != "" {
-		currentHead, _ = getWorkdirHead(b.Environment.Path)
+		if _, err := os.Stat(b.Environment.Path); err == nil {
+			// Local checkout exists, get HEAD from workdir
+			currentHead, _ = getWorkdirHead(b.Environment.Path)
+		} else {
+			// Remote backend - use HeadRev from database
+			currentHead = b.HeadRev
+		}
 	}
 
 	// Get gate status
@@ -977,10 +1064,19 @@ func (s *Server) handleBranchDetail(w http.ResponseWriter, r *http.Request) {
 	canMerge := allGatesPass && !gatesStale && len(gateRuns) > 0
 
 	// Get configured gates from cook.toml
+	// For remote backends, load from bare repo since local checkout doesn't exist
 	var configuredGates []gate.Gate
 	if b.Environment.Path != "" {
-		if cfg, err := gate.LoadRepoConfig(b.Environment.Path); err == nil {
-			configuredGates = cfg.Gates
+		if _, err := os.Stat(b.Environment.Path); err == nil {
+			// Local checkout exists
+			if cfg, err := gate.LoadRepoConfig(b.Environment.Path); err == nil {
+				configuredGates = cfg.Gates
+			}
+		} else {
+			// Remote backend - load from bare repo
+			if cfg, err := gate.LoadRepoConfigFromBareRepo(rp.Path); err == nil {
+				configuredGates = cfg.Gates
+			}
 		}
 	}
 
@@ -1030,6 +1126,14 @@ func (s *Server) handleBranchRunGates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get repo for bare repo path
+	repoStore := repo.NewStore(s.cfg.Server.DataDir)
+	rp, err := repoStore.Get(owner, repoName)
+	if err != nil || rp == nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
 	// Get branch
 	branchStore := branch.NewStore(s.db, s.cfg.Server.DataDir)
 	b, err := branchStore.Get(repoRef, name)
@@ -1043,8 +1147,19 @@ func (s *Server) handleBranchRunGates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is a local or remote backend
+	isRemoteBackend := false
+	if _, err := os.Stat(b.Environment.Path); os.IsNotExist(err) {
+		isRemoteBackend = true
+	}
+
 	// Load gate config
-	cfg, err := gate.LoadRepoConfig(b.Environment.Path)
+	var cfg *gate.RepoConfig
+	if isRemoteBackend {
+		cfg, err = gate.LoadRepoConfigFromBareRepo(rp.Path)
+	} else {
+		cfg, err = gate.LoadRepoConfig(b.Environment.Path)
+	}
 	if err != nil {
 		http.Error(w, "Failed to load cook.toml: "+err.Error(), http.StatusBadRequest)
 		return
@@ -1055,20 +1170,40 @@ func (s *Server) handleBranchRunGates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get current HEAD rev from the actual checkout
-	rev, err := getWorkdirHead(b.Environment.Path)
-	if err != nil {
-		http.Error(w, "Failed to get current HEAD: "+err.Error(), http.StatusInternalServerError)
-		return
+	// Get current HEAD rev
+	var rev string
+	if isRemoteBackend {
+		rev = b.HeadRev
+	} else {
+		rev, err = getWorkdirHead(b.Environment.Path)
+		if err != nil {
+			http.Error(w, "Failed to get current HEAD: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Run all gates
 	gateStore := gate.NewStore(s.db, s.cfg.Server.DataDir)
-	for _, g := range cfg.Gates {
-		if g.Command == "" {
-			continue
+	if isRemoteBackend {
+		// For remote backends, get the backend and run gates through it
+		backend, err := b.Backend()
+		if err != nil {
+			http.Error(w, "Failed to connect to backend: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
-		gateStore.RunGate(g, repoRef, name, rev, b.Environment.Path)
+		for _, g := range cfg.Gates {
+			if g.Command == "" {
+				continue
+			}
+			gateStore.RunGateRemote(g, repoRef, name, rev, backend)
+		}
+	} else {
+		for _, g := range cfg.Gates {
+			if g.Command == "" {
+				continue
+			}
+			gateStore.RunGate(g, repoRef, name, rev, b.Environment.Path)
+		}
 	}
 
 	http.Redirect(w, r, "/branches/"+owner+"/"+repoName+"/"+name, http.StatusSeeOther)
@@ -1110,12 +1245,33 @@ func (s *Server) handleBranchMerge(w http.ResponseWriter, r *http.Request) {
 
 	// Verify all gates pass on current HEAD
 	if b.Environment.Path != "" {
-		currentHead, _ := getWorkdirHead(b.Environment.Path)
+		// Check if this is a local or remote backend
+		isRemoteBackend := false
+		if _, statErr := os.Stat(b.Environment.Path); os.IsNotExist(statErr) {
+			isRemoteBackend = true
+		}
+
+		// Get current HEAD
+		var currentHead string
+		if isRemoteBackend {
+			currentHead = b.HeadRev
+		} else {
+			currentHead, _ = getWorkdirHead(b.Environment.Path)
+		}
+
 		gateStore := gate.NewStore(s.db, s.cfg.Server.DataDir)
 		allGateRuns, _ := gateStore.ListRuns(repoRef, name)
 
-		// Get configured gates
-		cfg, _ := gate.LoadRepoConfig(b.Environment.Path)
+		// Get configured gates from appropriate source
+		var cfg *gate.RepoConfig
+		if isRemoteBackend {
+			cfg, _ = gate.LoadRepoConfigFromBareRepo(rp.Path)
+		} else {
+			cfg, _ = gate.LoadRepoConfig(b.Environment.Path)
+		}
+		if cfg == nil {
+			cfg = &gate.RepoConfig{}
+		}
 		requiredGates := make(map[string]bool)
 		for _, g := range cfg.Gates {
 			if g.Command != "" {

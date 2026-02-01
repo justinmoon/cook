@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/justinmoon/cook/internal/db"
+	"github.com/justinmoon/cook/internal/env"
 )
 
 type Gate struct {
@@ -156,6 +158,62 @@ func (s *Store) RunGate(gate Gate, repo, branchName, rev, checkoutPath string) (
 			code := exitErr.ExitCode()
 			run.ExitCode = &code
 		}
+		run.Status = StatusFailed
+	} else {
+		code := 0
+		run.ExitCode = &code
+		run.Status = StatusPassed
+	}
+
+	if err := s.UpdateRun(run); err != nil {
+		return run, fmt.Errorf("failed to update run: %w", err)
+	}
+
+	return run, nil
+}
+
+// RunGateRemote runs a gate command on a remote backend
+func (s *Store) RunGateRemote(gate Gate, repo, branchName, rev string, backend env.Backend) (*GateRun, error) {
+	// Create log directory
+	logDir := filepath.Join(s.dataDir, "logs", repo, branchName)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create log dir: %w", err)
+	}
+
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s-%s.log", gate.Name, time.Now().Format("20060102-150405")))
+
+	now := time.Now()
+	run := &GateRun{
+		BranchRepo: repo,
+		BranchName: branchName,
+		GateName:   gate.Name,
+		Rev:        rev,
+		Status:     StatusRunning,
+		StartedAt:  &now,
+		LogPath:    logPath,
+	}
+
+	if err := s.CreateRun(run); err != nil {
+		return nil, err
+	}
+
+	// Run the command on the remote backend
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	output, err := backend.Exec(ctx, gate.Command)
+
+	// Write output to log file
+	if writeErr := os.WriteFile(logPath, output, 0644); writeErr != nil {
+		fmt.Printf("failed to write gate log: %v\n", writeErr)
+	}
+
+	finishedAt := time.Now()
+	run.FinishedAt = &finishedAt
+
+	if err != nil {
+		code := 1 // Default exit code for errors
+		run.ExitCode = &code
 		run.Status = StatusFailed
 	} else {
 		code := 0
