@@ -24,7 +24,8 @@ func timeoutMiddleware(timeout time.Duration) func(next http.Handler) http.Handl
 			path := r.URL.Path
 			if strings.HasPrefix(path, "/events") ||
 				strings.HasPrefix(path, "/ws/") ||
-				strings.HasPrefix(path, "/terminal/") {
+				strings.HasPrefix(path, "/terminal/") ||
+				strings.Contains(path, "/ports/") {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -119,6 +120,8 @@ func (s *Server) setupRoutes() {
 	s.router.Post("/tasks/{owner}/{repo}/{slug}/delete", s.handleTaskDelete)
 	s.router.Post("/tasks/{owner}/{repo}/{slug}/start", s.handleTaskStartBranch)
 	s.router.Get("/branches/{owner}/{repo}/{name}", s.handleBranchDetail)
+	s.router.Handle("/branches/{owner}/{repo}/{name}/ports/{port}", http.HandlerFunc(s.handleBranchPortProxy))
+	s.router.Handle("/branches/{owner}/{repo}/{name}/ports/{port}/*", http.HandlerFunc(s.handleBranchPortProxy))
 	s.router.Post("/branches/{owner}/{repo}/{name}/gates/run", s.handleBranchRunGates)
 	s.router.Post("/branches/{owner}/{repo}/{name}/merge", s.handleBranchMerge)
 	s.router.Post("/branches/{owner}/{repo}/{name}/rebase", s.handleBranchRebase)
