@@ -36,3 +36,7 @@
 ## E2E
 - Make backend E2E reliable; reduce timeouts via async setup or polling
 - Add cleanup for leaked sandboxes/machines after tests
+
+# Justin's stuff
+
+- gate monorepo prod deployment on a yubikey tap
