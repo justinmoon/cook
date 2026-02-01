@@ -1,7 +1,10 @@
-# Build OCI image for Modal/Docker sandboxes
+# Build OCI image for Modal/Docker/Fly sandboxes
 # Usage: nix build .#sandbox-image
-# Push: docker load < result && docker push ghcr.io/justinmoon/cook-sandbox:v3
-{ pkgs ? import <nixpkgs> { system = "x86_64-linux"; }
+# Push: docker load < result && docker push ghcr.io/justinmoon/cook-sandbox:latest
+#
+# Note: claude-code must be installed at runtime since npm install requires
+# network access which isn't available during nix build.
+{ pkgs ? import <nixpkgs> { system = "x86_64-linux"; config.allowUnfree = true; }
 , src ? ./..
 }:
 
@@ -16,6 +19,21 @@ let
     env.CGO_ENABLED = "0";
     proxyVendor = true;  # Don't use vendor dir
   };
+
+  tailscaleTools = [
+    (pkgs.writeTextFile {
+      name = "cook-ts-preflight";
+      text = builtins.readFile ../scripts/tailscale/fly-preflight.sh;
+      executable = true;
+      destination = "/bin/cook-ts-preflight";
+    })
+    (pkgs.writeTextFile {
+      name = "cook-ts-up";
+      text = builtins.readFile ../scripts/tailscale/fly-up.sh;
+      executable = true;
+      destination = "/bin/cook-ts-up";
+    })
+  ];
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "ghcr.io/justinmoon/cook-sandbox";
@@ -29,42 +47,49 @@ pkgs.dockerTools.buildLayeredImage {
     gnused
     gawk
     findutils
-    
+    zsh
+
     # Dev tools
     git
     curl
     wget
     jq
-    
+
     # Editors
     vim
     neovim
-    
+
     # Search
     ripgrep
     fd
-    
+
     # Process management
     procps
-    
+
     # Networking
-    netcat-gnu
-    
+    iproute2
+    iptables
+    iputils
+    libcap
+    netcat-openbsd
+    tailscale
+
     # Node.js
     nodejs_20
-    
+
     # Claude Code CLI
     claude-code
-    
+    sudo
+
     # Cook agent for terminal sessions
     cook-agent
-    
+
     # CA certificates for HTTPS
     cacert
-    
+
     # Nix store requires these for dynamic linking
     stdenv.cc.cc.lib
-  ];
+  ] ++ tailscaleTools;
 
   config = {
     Env = [

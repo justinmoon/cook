@@ -110,6 +110,8 @@
                                 <label><input type="radio" name="backend" value="local"> Local</label>
                                 <label><input type="radio" name="backend" value="docker"> Docker</label>
                                 <label><input type="radio" name="backend" value="modal"> Modal</label>
+                                <label><input type="radio" name="backend" value="sprites"> Sprites</label>
+                                <label><input type="radio" name="backend" value="fly-machines"> Fly Machines</label>
                             </fieldset>
                             <label>
                                 Dotfiles (optional)
@@ -129,6 +131,11 @@
                         </form>
                     </article>
                 </dialog>
+                {{else if and $.IsOwner (eq .Status "in_progress") (index $.ActiveBranches .Slug)}}
+                <form method="POST" action="/branches/{{.Repo}}/{{.Slug}}/abandon" style="display: inline;">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                    <button class="secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">Abandon</button>
+                </form>
                 {{end}}
             </td>
         </tr>

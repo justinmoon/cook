@@ -20,13 +20,14 @@ const (
 
 // ModalBackend runs commands in a Modal sandbox.
 type ModalBackend struct {
-	config      Config
-	client      *modal.Client
-	app         *modal.App
-	sandbox     *modal.Sandbox
-	sandboxID   string
-	workDir     string
-	agentTunnel string // Tunnel URL for cook-agent
+	config       Config
+	client       *modal.Client
+	app          *modal.App
+	sandbox      *modal.Sandbox
+	sandboxID    string
+	workDir      string
+	agentTunnel  string // Tunnel URL for cook-agent
+	tailnetProxy string
 }
 
 // NewModalBackend creates a new Modal backend with the given config.
@@ -61,12 +62,25 @@ func NewModalBackendFromSandboxID(sandboxID string, hostWorkDir string) (*ModalB
 		return nil, fmt.Errorf("failed to reconnect to sandbox %s: %w", sandboxID, err)
 	}
 
+	tunnels, err := sandbox.Tunnels(ctx, 30*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tunnels: %w", err)
+	}
+	var agentTunnel string
+	if tunnel, ok := tunnels[modalAgentPort]; ok {
+		agentTunnel = tunnel.URL()
+	}
+	if agentTunnel == "" {
+		return nil, fmt.Errorf("no tunnel found for port %d", modalAgentPort)
+	}
+
 	return &ModalBackend{
-		client:    client,
-		app:       app,
-		sandbox:   sandbox,
-		sandboxID: sandboxID,
-		workDir:   "/workspace",
+		client:      client,
+		app:         app,
+		sandbox:     sandbox,
+		sandboxID:   sandboxID,
+		workDir:     "/workspace",
+		agentTunnel: agentTunnel,
 	}, nil
 }
 
@@ -82,9 +96,15 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 	// Create sandbox with pre-built image (tools already installed via nix)
 	image := b.client.Images.FromRegistry("ghcr.io/justinmoon/cook-sandbox:v3", nil)
 
+	sandboxName := b.config.SandboxName
+	if sandboxName == "" {
+		sandboxName = b.config.Name
+	}
+
 	start := time.Now()
 	fmt.Printf("Creating Modal sandbox...\n")
 	sandbox, err := b.client.Sandboxes.Create(ctx, app, image, &modal.SandboxCreateParams{
+		Name: sandboxName,
 		// Add environment variables
 		Env: map[string]string{
 			"HOME":    "/root",
@@ -109,6 +129,10 @@ func (b *ModalBackend) Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to create workspace: %w", err)
 	}
 	fmt.Printf("Created workspace (took %v)\n", time.Since(start))
+
+	if err := b.setupTailnet(ctx); err != nil {
+		return fmt.Errorf("failed to setup tailnet: %w", err)
+	}
 
 	// Clone the repo
 	start = time.Now()
@@ -155,17 +179,127 @@ func (b *ModalBackend) installTools(ctx context.Context) error {
 	return nil
 }
 
+func (b *ModalBackend) setupTailnet(ctx context.Context) error {
+	authKey := strings.TrimSpace(os.Getenv("TS_AUTHKEY"))
+	if authKey == "" {
+		return nil
+	}
+
+	if _, err := b.Exec(ctx, "if [ ! -x /usr/bin/env ]; then mkdir -p /usr/bin && ln -s /bin/env /usr/bin/env; fi"); err != nil {
+		return fmt.Errorf("failed to ensure /usr/bin/env: %w", err)
+	}
+
+	if err := b.ensureCookTSUp(ctx); err != nil {
+		return err
+	}
+
+	hostname := strings.TrimSpace(os.Getenv("TS_HOSTNAME"))
+	if hostname == "" {
+		hostname = "modal-" + b.sandboxID
+	}
+	hostname = sanitizeSpriteName(hostname)
+
+	forceUserspace := strings.TrimSpace(os.Getenv("TS_FORCE_USERSPACE"))
+	if forceUserspace == "" {
+		forceUserspace = "1"
+	}
+	cmd := fmt.Sprintf(
+		"TS_AUTHKEY=%s TS_HOSTNAME=%s TS_FORCE_USERSPACE=%s cook-ts-up",
+		shellEscape(authKey),
+		shellEscape(hostname),
+		shellEscape(forceUserspace),
+	)
+	output, err := b.Exec(ctx, cmd)
+	if err != nil {
+		return fmt.Errorf("cook-ts-up failed: %w: %s", err, string(output))
+	}
+
+	if strings.Contains(string(output), "tailscale mode: userspace") {
+		b.tailnetProxy = "socks5h://127.0.0.1:1055"
+	}
+
+	return nil
+}
+
+func (b *ModalBackend) ensureCookTSUp(ctx context.Context) error {
+	if _, err := b.Exec(ctx, "command -v cook-ts-up >/dev/null 2>&1 && grep -q 'tailscale_bin' \"$(command -v cook-ts-up)\""); err == nil {
+		return nil
+	}
+
+	scriptPath := filepath.Join("scripts", "tailscale", "fly-up.sh")
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("cook-ts-up missing and failed to read %s: %w", scriptPath, err)
+	}
+
+	encoded := encodeBase64(script)
+	installCmd := fmt.Sprintf("echo -n '%s' | base64 -d > /bin/cook-ts-up && chmod +x /bin/cook-ts-up", encoded)
+	if _, err := b.Exec(ctx, installCmd); err != nil {
+		return fmt.Errorf("failed to install cook-ts-up: %w", err)
+	}
+
+	return nil
+}
+
 func (b *ModalBackend) cloneRepo(ctx context.Context) error {
-	cmd := fmt.Sprintf("git clone --branch %s %s %s", b.config.BranchName, b.config.RepoURL, b.workDir)
+	cmd := fmt.Sprintf("%sgit clone %s %s", b.proxyEnvPrefix(), b.config.RepoURL, b.workDir)
 	if _, err := b.Exec(ctx, cmd); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)
+	}
+
+	if b.config.BranchName != "" {
+		branch := b.config.BranchName
+		checkoutCmd := fmt.Sprintf(
+			"cd %s && if git show-ref --verify --quiet refs/remotes/origin/%[2]s; then git checkout -B %[2]s origin/%[2]s; else git checkout -b %[2]s; fi",
+			b.workDir,
+			branch,
+		)
+		if _, err := b.Exec(ctx, checkoutCmd); err != nil {
+			return fmt.Errorf("git checkout failed: %w", err)
+		}
 	}
 	return nil
 }
 
 func (b *ModalBackend) setupAgent(ctx context.Context) error {
-	// cook-agent is pre-installed in the nix image, just start it
-	_, err := b.Exec(ctx, "nohup cook-agent > /tmp/cook-agent.log 2>&1 &")
+	agentCmd := "cook-agent"
+	if _, err := b.Exec(ctx, "command -v cook-agent"); err != nil {
+		agentPath, err := findAgentBinary()
+		if err != nil {
+			return fmt.Errorf("cook-agent binary not found: %w", err)
+		}
+
+		agentData, err := os.ReadFile(agentPath)
+		if err != nil {
+			return fmt.Errorf("failed to read cook-agent: %w", err)
+		}
+
+		encoded := encodeBase64(agentData)
+
+		const chunkSize = 50000
+		tmpPath := "/tmp/cook-agent.b64"
+
+		b.Exec(ctx, fmt.Sprintf("rm -f %s", tmpPath))
+
+		for i := 0; i < len(encoded); i += chunkSize {
+			end := i + chunkSize
+			if end > len(encoded) {
+				end = len(encoded)
+			}
+			chunk := encoded[i:end]
+			if _, err := b.Exec(ctx, fmt.Sprintf("echo -n '%s' >> %s", chunk, tmpPath)); err != nil {
+				return fmt.Errorf("failed to write agent chunk: %w", err)
+			}
+		}
+
+		if _, err := b.Exec(ctx, fmt.Sprintf("base64 -d %s > /tmp/cook-agent && chmod +x /tmp/cook-agent && rm %s", tmpPath, tmpPath)); err != nil {
+			return fmt.Errorf("failed to decode agent: %w", err)
+		}
+
+		agentCmd = "/tmp/cook-agent"
+	}
+
+	_, err := b.Exec(ctx, fmt.Sprintf("nohup %s > /tmp/cook-agent.log 2>&1 &", agentCmd))
 	if err != nil {
 		return fmt.Errorf("failed to start agent: %w", err)
 	}
@@ -175,7 +309,7 @@ func (b *ModalBackend) setupAgent(ctx context.Context) error {
 		output, _ := b.Exec(ctx, fmt.Sprintf("nc -z localhost %d && echo OK || echo FAIL", modalAgentPort))
 		if strings.Contains(string(output), "OK") {
 			fmt.Printf("cook-agent started on port %d\n", modalAgentPort)
-			
+
 			// Get the tunnel URL for the agent port
 			tunnels, err := b.sandbox.Tunnels(ctx, 30*time.Second)
 			if err != nil {
@@ -187,7 +321,7 @@ func (b *ModalBackend) setupAgent(ctx context.Context) error {
 			} else {
 				return fmt.Errorf("no tunnel found for port %d", modalAgentPort)
 			}
-			
+
 			return nil
 		}
 		// Small delay - exec another command
@@ -281,7 +415,7 @@ func (b *ModalBackend) setupDotfiles(ctx context.Context) error {
 	dotfilesDir := "/root/.dotfiles"
 
 	// Clone dotfiles repo
-	_, err := b.Exec(ctx, fmt.Sprintf("git clone %s %s", b.config.Dotfiles, dotfilesDir))
+	_, err := b.Exec(ctx, fmt.Sprintf("%sgit clone %s %s", b.proxyEnvPrefix(), b.config.Dotfiles, dotfilesDir))
 	if err != nil {
 		return fmt.Errorf("failed to clone dotfiles: %w", err)
 	}
@@ -299,6 +433,15 @@ func (b *ModalBackend) setupDotfiles(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (b *ModalBackend) proxyEnvPrefix() string {
+	if b.tailnetProxy == "" {
+		return ""
+	}
+	proxy := shellEscape(b.tailnetProxy)
+	return fmt.Sprintf("ALL_PROXY=%s HTTP_PROXY=%s HTTPS_PROXY=%s http_proxy=%s https_proxy=%s ",
+		proxy, proxy, proxy, proxy, proxy)
 }
 
 // Exec runs a command in the sandbox and returns combined output.
@@ -322,7 +465,16 @@ func (b *ModalBackend) Exec(ctx context.Context, cmdStr string) ([]byte, error) 
 		return nil, fmt.Errorf("failed to read stderr: %w", err)
 	}
 
-	return append(stdout, stderr...), nil
+	output := append(stdout, stderr...)
+	exitCode, err := proc.Wait(ctx)
+	if err != nil {
+		return output, fmt.Errorf("exec wait failed: %w", err)
+	}
+	if exitCode != 0 {
+		return output, fmt.Errorf("exec failed with exit code %d", exitCode)
+	}
+
+	return output, nil
 }
 
 // Command is not directly supported for Modal - use cook-agent instead.

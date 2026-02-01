@@ -3,8 +3,12 @@
 package envagent
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
+	"os"
 	"strings"
 	"sync"
 
@@ -61,7 +65,36 @@ func Dial(addr string) (*Client, error) {
 		wsURL = "ws://" + addr
 	}
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	dialer := websocket.DefaultDialer
+	tlsConfig := (*tls.Config)(nil)
+	if isEnvTrue("COOK_AGENT_INSECURE") || isEnvTrue("COOK_FLY_AGENT_INSECURE") {
+		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+
+	if dnsServer := strings.TrimSpace(os.Getenv("COOK_AGENT_DNS_SERVER")); dnsServer != "" {
+		resolver := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "udp", dnsServer)
+			},
+		}
+		netDialer := &net.Dialer{Resolver: resolver}
+		dialer = &websocket.Dialer{
+			Proxy:            websocket.DefaultDialer.Proxy,
+			HandshakeTimeout: websocket.DefaultDialer.HandshakeTimeout,
+			TLSClientConfig:  tlsConfig,
+			NetDialContext:   netDialer.DialContext,
+		}
+	} else if tlsConfig != nil {
+		dialer = &websocket.Dialer{
+			Proxy:            websocket.DefaultDialer.Proxy,
+			HandshakeTimeout: websocket.DefaultDialer.HandshakeTimeout,
+			TLSClientConfig:  tlsConfig,
+		}
+	}
+
+	conn, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to cook-agent at %s: %w", wsURL, err)
 	}
@@ -71,6 +104,15 @@ func Dial(addr string) (*Client, error) {
 	}
 
 	return c, nil
+}
+
+func isEnvTrue(key string) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return false
+	}
+	value = strings.ToLower(value)
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 // Close closes the connection
@@ -114,12 +156,14 @@ func (c *Client) readMessage() (*Message, error) {
 }
 
 // CreateSession creates a new session in the agent
-func (c *Client) CreateSession(id, command, workDir string) error {
+func (c *Client) CreateSession(id, command, workDir string, rows, cols int) error {
 	if err := c.send(Message{
 		Type:      MsgCreate,
 		SessionID: id,
 		Command:   command,
 		WorkDir:   workDir,
+		Rows:      rows,
+		Cols:      cols,
 	}); err != nil {
 		return err
 	}

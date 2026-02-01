@@ -1,7 +1,7 @@
 # Docker Backend TODOs
 
 ## Nix Flake Image Building
-- Replace Dockerfile.env with nix flake in dotfiles
+- Use nix-built sandbox image for Docker backend
 - Requires Linux builder for cross-compilation (macOS can't build Linux images)
 - Options: remote builder, OrbStack integration, or pre-built images in registry
 
@@ -22,3 +22,17 @@
 ## UI
 - Show container build progress in UI (not just server logs)
 - Better error messages when agent connection fails
+
+## Remote Backends (Modal / Sprites / Fly Machines)
+- Modal: add sandbox create timeout + retry; avoid hanging /start requests
+- Modal: install `cook-ts-up` in image or auto-install (no missing script)
+- Modal/Fly: rebuild/push nix sandbox image with tailscale binaries (modal E2E fails: tailscaled missing)
+- Fly: improve start stability (reuse existing machine, refresh state, handle “starting”); ensure machines don’t exit immediately
+- Fly: auto-cleanup failed machines (or mark reuse-only in dev)
+- Sprites: tar extraction warnings/renames should not fail if sandbox is usable
+- Sprites: make tarball install robust (download + extract retries)
+- Ensure `cook-ts-up` baked into nix image + sprites tarball
+
+## E2E
+- Make backend E2E reliable; reduce timeouts via async setup or polling
+- Add cleanup for leaked sandboxes/machines after tests

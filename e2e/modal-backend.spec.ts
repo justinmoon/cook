@@ -7,25 +7,16 @@ test.describe("Modal backend test", () => {
   });
 
   test('can create branch with Modal backend and see terminal', async ({ page }) => {
+    test.setTimeout(600000);
     // Login
     await page.goto("/login");
     await page.click('button:has-text("Login with Nostr")');
     await page.waitForURL(/\/(dashboard|repos)/, { timeout: 15000 });
     
-    await page.screenshot({ path: '/tmp/modal-test-1-loggedin.png' });
-    
-    // Go to repos page
-    await page.goto("/repos");
+    // Go directly to test repo owned by the mocked pubkey.
+    await page.goto(`/repos/${TEST_PUBKEY}/test`);
     await page.waitForLoadState('networkidle');
-    
-    await page.screenshot({ path: '/tmp/modal-test-2-repos.png' });
-    
-    // Click on first repo (test repo)
-    await page.click('a:has-text("test")');
-    await page.waitForLoadState('networkidle');
-    
-    await page.screenshot({ path: '/tmp/modal-test-3-repo-detail.png' });
-    
+
     // Create task
     await page.click('button:has-text("New Task")');
     await page.waitForTimeout(500);
@@ -35,47 +26,52 @@ test.describe("Modal backend test", () => {
     await page.fill('textarea[name="body"]', "Test Modal backend - create hello.txt");
     await page.click('dialog button[type="submit"]');
     await page.waitForLoadState('networkidle');
-    
-    await page.screenshot({ path: '/tmp/modal-test-4-task-created.png' });
-    
+
     // Click Start on the new task
-    const startButton = page.locator(`tr:has-text("${taskTitle}") button:has-text("Start")`);
+    const startButton = page
+      .locator(`tr:has-text("${taskTitle}")`)
+      .locator('button:has-text("Start")')
+      .first();
     await startButton.click();
     await page.waitForTimeout(500);
-    
-    await page.screenshot({ path: '/tmp/modal-test-5-start-dialog.png' });
-    
+
     // Select Modal backend
-    const modalRadio = page.locator('input[name="backend"][value="modal"]');
-    await modalRadio.click();
-    
-    await page.screenshot({ path: '/tmp/modal-test-6-modal-selected.png' });
-    
+    const startDialog = page.locator('dialog[open]');
+    await expect(startDialog).toBeVisible();
+
+    const modalRadio = startDialog.locator('input[name="backend"][value="modal"]').first();
+    await modalRadio.check();
+
     // Start (without agent for faster test)
-    await page.click('button:has-text("Start without Agent")');
+    const [startResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) => {
+          return response.request().method() === "POST" && response.url().includes("/start");
+        },
+        { timeout: 420000 }
+      ),
+      startDialog.locator('button:has-text("Start with Agent")').click(),
+    ]);
+
+    if (startResponse.status() >= 400) {
+      const body = await startResponse.text();
+      throw new Error(`Start failed (${startResponse.status()}): ${body}`);
+    }
     
     // Wait for branch page - Modal sandbox takes ~2 minutes
     console.log('Waiting for Modal sandbox to provision (this takes ~2 minutes)...');
     await page.waitForURL("**/branches/**", { timeout: 240000 });
-    
-    await page.screenshot({ path: '/tmp/modal-test-7-branch-page.png' });
-    
+
     // Verify we're on a branch page
-    await expect(page.locator('h1')).toContainText(/Branch/i, { timeout: 5000 });
-    
-    await page.screenshot({ path: '/tmp/modal-test-8-branch-loaded.png' });
-    
+    await expect(page.locator('h1')).toContainText(taskTitle, { timeout: 5000 });
+
     // Wait for terminal to connect via WebSocket
     console.log('Waiting for terminal to connect...');
-    await page.waitForSelector('.status.connected', { timeout: 120000 });
-    
-    await page.screenshot({ path: '/tmp/modal-test-9-terminal-connected.png' });
-    
+    await page.waitForSelector('.tab-status.connected', { timeout: 120000 });
+
     // Give terminal time to initialize
     await page.waitForTimeout(3000);
-    await page.screenshot({ path: '/tmp/modal-test-10-terminal-ready.png' });
-    
-    console.log('Modal test screenshots saved to /tmp/modal-test-*.png');
+
     console.log('SUCCESS: Modal backend connected!');
   });
 });

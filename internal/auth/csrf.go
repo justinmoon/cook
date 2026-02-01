@@ -84,6 +84,12 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 				return
 			}
 
+			// Skip CSRF for git HTTP backend (used by sandboxes)
+			if strings.HasPrefix(r.URL.Path, "/git/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Skip CSRF for API routes with Authorization header (NIP-98 or Bearer)
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				authHeader := r.Header.Get("Authorization")

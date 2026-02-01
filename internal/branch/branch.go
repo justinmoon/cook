@@ -2,8 +2,11 @@ package branch
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -48,6 +51,12 @@ func (b *Branch) Backend() (env.Backend, error) {
 	if b.Environment.Path == "" {
 		return nil, fmt.Errorf("branch has no checkout path")
 	}
+	if b.Environment.Provisioning {
+		return nil, ErrProvisioning
+	}
+	if b.Environment.ProvisioningError != "" {
+		return nil, fmt.Errorf("branch provisioning failed: %s", b.Environment.ProvisioningError)
+	}
 
 	// For Docker backend, reconnect using container ID
 	if b.Environment.Backend == "docker" {
@@ -65,6 +74,22 @@ func (b *Branch) Backend() (env.Backend, error) {
 		return env.NewModalBackendFromSandbox(b.Environment.SandboxID, b.Environment.Path)
 	}
 
+	// For Sprites backend, reconnect using sprite name
+	if b.Environment.Backend == "sprites" {
+		if b.Environment.SpriteName == "" {
+			return nil, fmt.Errorf("sprites backend has no sprite name")
+		}
+		return env.NewSpritesBackendFromSpriteName(b.Environment.SpriteName, b.Environment.Path)
+	}
+
+	// For Fly Machines backend, reconnect using machine ID
+	if b.Environment.Backend == "fly-machines" {
+		if b.Environment.MachineID == "" {
+			return nil, fmt.Errorf("fly machines backend has no machine ID")
+		}
+		return env.NewFlyMachinesBackendFromMachineID(b.Environment.MachineID, b.Environment.Path)
+	}
+
 	cfg := env.Config{
 		WorkDir:  b.Environment.Path,
 		Dotfiles: b.Environment.Dotfiles,
@@ -73,12 +98,16 @@ func (b *Branch) Backend() (env.Backend, error) {
 }
 
 type EnvironmentSpec struct {
-	Backend     string `json:"backend"`                // "local", "docker", "modal"
-	Path        string `json:"path"`                   // checkout path (host path for docker)
-	Image       string `json:"image,omitempty"`        // docker image (optional)
-	Dotfiles    string `json:"dotfiles,omitempty"`     // git URL for dotfiles repo (optional)
-	ContainerID string `json:"container_id,omitempty"` // docker container ID
-	SandboxID   string `json:"sandbox_id,omitempty"`   // modal sandbox ID
+	Backend           string `json:"backend"`                      // "local", "docker", "modal", "sprites", "fly-machines"
+	Path              string `json:"path"`                         // checkout path (host path for docker)
+	Image             string `json:"image,omitempty"`              // docker image (optional)
+	Dotfiles          string `json:"dotfiles,omitempty"`           // git URL for dotfiles repo (optional)
+	ContainerID       string `json:"container_id,omitempty"`       // docker container ID
+	SandboxID         string `json:"sandbox_id,omitempty"`         // modal sandbox ID
+	SpriteName        string `json:"sprite_name,omitempty"`        // sprites sprite name
+	MachineID         string `json:"machine_id,omitempty"`         // fly machines machine ID
+	Provisioning      bool   `json:"provisioning,omitempty"`       // async setup in progress
+	ProvisioningError string `json:"provisioning_error,omitempty"` // async setup error
 }
 
 const (
@@ -86,6 +115,8 @@ const (
 	StatusMerged    = "merged"
 	StatusAbandoned = "abandoned"
 )
+
+var ErrProvisioning = errors.New("branch provisioning")
 
 type Store struct {
 	db      *db.DB
@@ -120,6 +151,15 @@ func (s *Store) Create(b *Branch) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) UpdateEnvironment(repo, name string, envSpec EnvironmentSpec) error {
+	envJSON, err := json.Marshal(envSpec)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE branches SET environment_json = ? WHERE repo = ? AND name = ?`, string(envJSON), repo, name)
+	return err
 }
 
 // CreateWithCheckout creates a branch with a cloned checkout directory
@@ -247,8 +287,34 @@ func (s *Store) CreateWithDockerCheckout(b *Branch, bareRepoPath string, dotfile
 	return nil
 }
 
+func (s *Store) CreateProvisioningRemoteBranch(b *Branch, bareRepoPath, backendType, dotfiles string) error {
+	// Validate branch name
+	if strings.Contains(b.Name, "/") {
+		return fmt.Errorf("branch name cannot contain '/'")
+	}
+
+	// Get base rev from master
+	baseRev, err := getHeadRev(bareRepoPath, "master")
+	if err != nil {
+		return fmt.Errorf("failed to get master HEAD: %w (does the repo have commits?)", err)
+	}
+	b.BaseRev = baseRev
+	b.HeadRev = baseRev
+
+	checkoutPath := filepath.Join(s.dataDir, "checkouts", b.Repo, b.Name)
+	b.Environment = EnvironmentSpec{
+		Backend:      backendType,
+		Path:         checkoutPath,
+		Dotfiles:     dotfiles,
+		Provisioning: true,
+	}
+	b.Status = StatusActive
+
+	return s.Create(b)
+}
+
 // CreateWithModalCheckout creates a branch with a Modal sandbox environment
-func (s *Store) CreateWithModalCheckout(b *Branch, bareRepoPath string, dotfiles string) error {
+func (s *Store) CreateWithModalCheckout(b *Branch, bareRepoPath, repoURL, dotfiles string) error {
 	// Validate branch name
 	if strings.Contains(b.Name, "/") {
 		return fmt.Errorf("branch name cannot contain '/'")
@@ -266,13 +332,17 @@ func (s *Store) CreateWithModalCheckout(b *Branch, bareRepoPath string, dotfiles
 	checkoutPath := filepath.Join(s.dataDir, "checkouts", b.Repo, b.Name)
 
 	// Create Modal backend config
-	sandboxName := strings.ReplaceAll(b.Repo, "/", "-") + "-" + b.Name
+	sandboxName := modalNameForBranch(b.Repo, b.Name)
+	if repoURL == "" {
+		repoURL = bareRepoPath
+	}
 	cfg := env.Config{
-		Name:       sandboxName,
-		RepoURL:    bareRepoPath,
-		BranchName: b.Name,
-		WorkDir:    checkoutPath,
-		Dotfiles:   dotfiles,
+		Name:        sandboxName,
+		SandboxName: sandboxName,
+		RepoURL:     repoURL,
+		BranchName:  b.Name,
+		WorkDir:     checkoutPath,
+		Dotfiles:    dotfiles,
 	}
 
 	backend, err := env.NewModalBackend(cfg)
@@ -303,6 +373,237 @@ func (s *Store) CreateWithModalCheckout(b *Branch, bareRepoPath string, dotfiles
 	return nil
 }
 
+// CreateWithSpritesCheckout creates a branch with a Sprites sandbox environment
+func (s *Store) CreateWithSpritesCheckout(b *Branch, bareRepoPath, repoURL, dotfiles string) error {
+	// Validate branch name
+	if strings.Contains(b.Name, "/") {
+		return fmt.Errorf("branch name cannot contain '/'")
+	}
+
+	// Get base rev from master
+	baseRev, err := getHeadRev(bareRepoPath, "master")
+	if err != nil {
+		return fmt.Errorf("failed to get master HEAD: %w (does the repo have commits?)", err)
+	}
+	b.BaseRev = baseRev
+	b.HeadRev = baseRev
+
+	// Create a "virtual" path - Sprites doesn't use host filesystem
+	checkoutPath := filepath.Join(s.dataDir, "checkouts", b.Repo, b.Name)
+
+	// Create Sprites backend config
+	spriteName := spritesNameForBranch(b.Repo, b.Name)
+	if repoURL == "" {
+		repoURL = bareRepoPath
+	}
+	cfg := env.Config{
+		Name:        spriteName,
+		SandboxName: spriteName,
+		RepoURL:     repoURL,
+		BranchName:  b.Name,
+		WorkDir:     checkoutPath,
+		Dotfiles:    dotfiles,
+	}
+
+	backend, err := env.NewSpritesBackend(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create sprites backend: %w", err)
+	}
+
+	// Setup the sprite (this clones repo, starts cook-agent, sets up dotfiles)
+	if err := backend.Setup(context.Background()); err != nil {
+		backend.Teardown(context.Background())
+		return fmt.Errorf("failed to setup sprites environment: %w", err)
+	}
+
+	b.Environment = EnvironmentSpec{
+		Backend:    "sprites",
+		Path:       checkoutPath,
+		Dotfiles:   dotfiles,
+		SpriteName: backend.SpriteName(),
+	}
+	b.Status = StatusActive
+
+	// Save to DB
+	if err := s.Create(b); err != nil {
+		backend.Teardown(context.Background())
+		return err
+	}
+
+	return nil
+}
+
+// CreateWithFlyMachinesCheckout creates a branch with a Fly Machines environment
+func (s *Store) CreateWithFlyMachinesCheckout(b *Branch, bareRepoPath, repoURL, dotfiles string) error {
+	// Validate branch name
+	if strings.Contains(b.Name, "/") {
+		return fmt.Errorf("branch name cannot contain '/'")
+	}
+
+	// Get base rev from master
+	baseRev, err := getHeadRev(bareRepoPath, "master")
+	if err != nil {
+		return fmt.Errorf("failed to get master HEAD: %w (does the repo have commits?)", err)
+	}
+	b.BaseRev = baseRev
+	b.HeadRev = baseRev
+
+	// Create a "virtual" path - Fly Machines doesn't use host filesystem
+	checkoutPath := filepath.Join(s.dataDir, "checkouts", b.Repo, b.Name)
+
+	// Create Fly Machines backend config
+	machineName := flyMachineNameForBranch(b.Repo, b.Name)
+	if repoURL == "" {
+		repoURL = bareRepoPath
+	}
+	cfg := env.Config{
+		Name:        machineName,
+		SandboxName: machineName,
+		RepoURL:     repoURL,
+		BranchName:  b.Name,
+		WorkDir:     checkoutPath,
+		Dotfiles:    dotfiles,
+	}
+
+	backend, err := env.NewFlyMachinesBackend(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create fly machines backend: %w", err)
+	}
+
+	// Setup the machine (this clones repo, starts cook-agent, sets up dotfiles)
+	if err := backend.Setup(context.Background()); err != nil {
+		backend.Teardown(context.Background())
+		return fmt.Errorf("failed to setup fly machines environment: %w", err)
+	}
+
+	b.Environment = EnvironmentSpec{
+		Backend:   "fly-machines",
+		Path:      checkoutPath,
+		Dotfiles:  dotfiles,
+		MachineID: backend.MachineID(),
+	}
+	b.Status = StatusActive
+
+	// Save to DB
+	if err := s.Create(b); err != nil {
+		backend.Teardown(context.Background())
+		return err
+	}
+
+	return nil
+}
+
+func (s *Store) ProvisionRemoteBranch(ctx context.Context, b *Branch, bareRepoPath, repoURL, taskMdContent string) error {
+	if b.Environment.Backend == "" {
+		return fmt.Errorf("missing backend type")
+	}
+	if repoURL == "" {
+		repoURL = bareRepoPath
+	}
+
+	var backend env.Backend
+	var err error
+	envSpec := b.Environment
+
+	switch envSpec.Backend {
+	case "modal":
+		sandboxName := modalNameForBranch(b.Repo, b.Name)
+		cfg := env.Config{
+			Name:        sandboxName,
+			SandboxName: sandboxName,
+			RepoURL:     repoURL,
+			BranchName:  b.Name,
+			WorkDir:     envSpec.Path,
+			Dotfiles:    envSpec.Dotfiles,
+		}
+		var mb *env.ModalBackend
+		mb, err = env.NewModalBackend(cfg)
+		backend = mb
+		if err == nil {
+			err = mb.Setup(ctx)
+			if err == nil {
+				envSpec.SandboxID = mb.SandboxID()
+			}
+		}
+	case "sprites":
+		spriteName := spritesNameForBranch(b.Repo, b.Name)
+		cfg := env.Config{
+			Name:        spriteName,
+			SandboxName: spriteName,
+			RepoURL:     repoURL,
+			BranchName:  b.Name,
+			WorkDir:     envSpec.Path,
+			Dotfiles:    envSpec.Dotfiles,
+		}
+		var sb *env.SpritesBackend
+		sb, err = env.NewSpritesBackend(cfg)
+		backend = sb
+		if err == nil {
+			err = sb.Setup(ctx)
+			if err == nil {
+				envSpec.SpriteName = sb.SpriteName()
+			}
+		}
+	case "fly-machines":
+		machineName := flyMachineNameForBranch(b.Repo, b.Name)
+		cfg := env.Config{
+			Name:        machineName,
+			SandboxName: machineName,
+			RepoURL:     repoURL,
+			BranchName:  b.Name,
+			WorkDir:     envSpec.Path,
+			Dotfiles:    envSpec.Dotfiles,
+		}
+		var fb *env.FlyMachinesBackend
+		fb, err = env.NewFlyMachinesBackend(cfg)
+		backend = fb
+		if err == nil {
+			err = fb.Setup(ctx)
+			if err == nil {
+				envSpec.MachineID = fb.MachineID()
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported backend for async provisioning: %s", envSpec.Backend)
+	}
+
+	if err != nil {
+		envSpec.Provisioning = false
+		envSpec.ProvisioningError = err.Error()
+		if backend != nil {
+			backend.Teardown(context.Background())
+		}
+		_ = s.UpdateEnvironment(b.Repo, b.Name, envSpec)
+		return err
+	}
+
+	if taskMdContent != "" && backend != nil {
+		taskMdPath := filepath.Join(envSpec.Path, "TASK.md")
+		if err := backend.WriteFile(ctx, taskMdPath, []byte(taskMdContent)); err != nil {
+			fmt.Printf("Warning: failed to write TASK.md for %s/%s: %v\n", b.Repo, b.Name, err)
+		}
+	}
+
+	latest, getErr := s.Get(b.Repo, b.Name)
+	if getErr == nil && latest.Status != StatusActive {
+		if backend != nil {
+			backend.Teardown(context.Background())
+		}
+		return nil
+	}
+
+	envSpec.Provisioning = false
+	envSpec.ProvisioningError = ""
+	if err := s.UpdateEnvironment(b.Repo, b.Name, envSpec); err != nil {
+		if backend != nil {
+			backend.Teardown(context.Background())
+		}
+		return err
+	}
+
+	return nil
+}
+
 // RemoveCheckout removes the checkout directory for a branch.
 // For Docker/Modal branches, this also tears down the container/sandbox.
 func (s *Store) RemoveCheckout(b *Branch) error {
@@ -326,8 +627,24 @@ func (s *Store) RemoveCheckout(b *Branch) error {
 		}
 	}
 
-	// Remove the directory (for local/docker) - Modal doesn't have local files
-	if b.Environment.Backend != "modal" {
+	// For Sprites backend, teardown the sprite
+	if b.Environment.Backend == "sprites" && b.Environment.SpriteName != "" {
+		backend, err := b.Backend()
+		if err == nil {
+			backend.Teardown(context.Background())
+		}
+	}
+
+	// For Fly Machines backend, teardown the machine
+	if b.Environment.Backend == "fly-machines" && b.Environment.MachineID != "" {
+		backend, err := b.Backend()
+		if err == nil {
+			backend.Teardown(context.Background())
+		}
+	}
+
+	// Remove the directory (for local/docker) - Modal/Sprites/Fly don't have local files
+	if b.Environment.Backend != "modal" && b.Environment.Backend != "sprites" && b.Environment.Backend != "fly-machines" {
 		return os.RemoveAll(b.Environment.Path)
 	}
 	return nil
@@ -572,4 +889,75 @@ func scanBranchRows(rows *sql.Rows) (*Branch, error) {
 	}
 
 	return &b, nil
+}
+
+func spritesNameForBranch(repo, branch string) string {
+	raw := strings.ReplaceAll(repo, "/", "-") + "-" + branch
+	hash := sha1.Sum([]byte(raw))
+	suffix := hex.EncodeToString(hash[:4])
+
+	maxBase := 63 - (1 + len(suffix))
+	base := raw
+	if len(base) > maxBase {
+		base = base[:maxBase]
+	}
+
+	return sanitizeSpriteName(base + "-" + suffix)
+}
+
+func modalNameForBranch(repo, branch string) string {
+	raw := strings.ReplaceAll(repo, "/", "-") + "-" + branch
+	hash := sha1.Sum([]byte("modal-" + raw))
+	suffix := hex.EncodeToString(hash[:4])
+
+	maxBase := 63 - (1 + len(suffix))
+	base := raw
+	if len(base) > maxBase {
+		base = base[:maxBase]
+	}
+
+	return sanitizeSpriteName(base + "-" + suffix)
+}
+
+func flyMachineNameForBranch(repo, branch string) string {
+	raw := strings.ReplaceAll(repo, "/", "-") + "-" + branch
+	hash := sha1.Sum([]byte("fly-" + raw))
+	suffix := hex.EncodeToString(hash[:4])
+
+	maxBase := 63 - (1 + len(suffix))
+	base := raw
+	if len(base) > maxBase {
+		base = base[:maxBase]
+	}
+
+	return sanitizeSpriteName(base + "-" + suffix)
+}
+
+func sanitizeSpriteName(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	name = strings.ToLower(name)
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+
+	cleaned := strings.Trim(b.String(), "-")
+	for strings.Contains(cleaned, "--") {
+		cleaned = strings.ReplaceAll(cleaned, "--", "-")
+	}
+	if len(cleaned) > 63 {
+		cleaned = cleaned[:63]
+		cleaned = strings.TrimRight(cleaned, "-")
+	}
+	return cleaned
 }

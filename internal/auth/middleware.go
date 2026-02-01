@@ -54,6 +54,7 @@ func NewMiddleware(sessionStore *SessionStore, enabled bool, allowedPubkeys []st
 			"/auth/challenge",
 			"/auth/verify",
 			"/static/",
+			"/git/",
 			"/repos",
 			"/branches/",
 			"/tasks/",

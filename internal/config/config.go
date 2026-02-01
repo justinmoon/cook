@@ -32,6 +32,7 @@ type ServerConfig struct {
 	Auth           string   `toml:"auth"`            // "none" or "nostr"
 	AllowedPubkeys []string `toml:"allowed_pubkeys"` // empty = allow all, otherwise whitelist
 	Owner          string   `toml:"owner"`           // hex pubkey of instance owner (empty = first login claims)
+	PublicURL      string   `toml:"public_url"`      // public base URL for remote sandboxes (optional)
 }
 
 type ClientConfig struct {
@@ -109,6 +110,10 @@ func Load() (*Config, error) {
 
 	if authMode := os.Getenv("COOK_AUTH"); authMode != "" {
 		cfg.Server.Auth = authMode
+	}
+
+	if publicURL := os.Getenv("COOK_PUBLIC_URL"); publicURL != "" {
+		cfg.Server.PublicURL = publicURL
 	}
 
 	if host := os.Getenv("COOK_HOST"); host != "" {

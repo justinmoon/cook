@@ -2,10 +2,10 @@
 
 ## Overview
 
-An **Environment** is where code runs. Cook supports multiple backend types so agents can work in local checkouts, Docker containers, or cloud sandboxes (Modal). 
+An **Environment** is where code runs. Cook supports multiple backend types so agents can work in local checkouts, Docker containers, or cloud sandboxes (Modal, Sprites, Fly Machines). 
 
 Each environment has:
-- A **backend** (local, docker, modal) that handles execution
+- A **backend** (local, docker, modal, sprites, fly-machines) that handles execution
 - A **dotfiles repo** (optional) that defines tools and configs
 - One or more **project repos** to work on
 
@@ -65,8 +65,61 @@ github.com/user/dotfiles/
 | **local** | Development on your machine | Git clone to local path | Persistent until branch merged/abandoned |
 | **docker** | Isolated containers via OrbStack | Docker container with volume | Container lifecycle |
 | **modal** | Cloud sandboxes | Modal Sandbox API | Sandbox lifecycle + volumes |
+| **sprites** | Cloud sandboxes | Sprites API + nix tarball | Sprite lifecycle + checkpoints |
+| **fly-machines** | Cloud VMs | Fly Machines API + OCI image | Machine lifecycle + volumes |
+
+### Remote Backends Need a Public Git URL
+
+Modal/Sprites/Fly Machines clone repos inside remote sandboxes, so they need a public URL to the bare repos.
+
+Set:
+- `COOK_PUBLIC_URL` to the **public base URL** of your Cook server.
+
+In dev, you can expose the local server with:
+```
+expose 7420
+```
+Then set `COOK_PUBLIC_URL` to the printed URL (include basic auth if used).
 
 ---
+
+## Tailnet Dev Tests (optional)
+
+If you're using Tailscale to reach your dev host, run the integration tests with tailnet checks:
+
+Required env:
+- `COOK_TAILNET_TEST=1`
+- `TS_AUTHKEY`
+- `COOK_TAIL_IP`
+
+Optional:
+- `COOK_TAIL_PORT` (defaults to `COOK_PORT` or `7420`)
+- `COOK_TAIL_GIT_URL` (if set, tests git over tailnet)
+- `COOK_TAIL_HOSTNAME` (override node hostname)
+
+Run:
+```
+just test-tailnet
+```
+
+## Fly Machines Setup (single-user)
+
+Required:
+- `FLY_API_TOKEN` (or `FLY_TOKEN`) for Fly auth
+- A Fly app (default: `cook-sandbox`)
+- Image in Fly registry, built from the nix sandbox image:
+  - `nix build .#sandbox-image`
+  - `docker load < result`
+  - `docker tag ghcr.io/justinmoon/cook-sandbox:latest registry.fly.io/<app>:cook-env`
+  - `docker push registry.fly.io/<app>:cook-env`
+- Public IPs for DNS (`fly ips allocate-v6` and `fly ips allocate-v4`)
+
+Optional overrides:
+- `FLY_MACHINES_APP` (app name)
+- `FLY_MACHINES_IMAGE` (override image, default `registry.fly.io/<app>:cook-env`)
+- `FLY_MACHINES_AGENT_ADDR` (override agent URL)
+- `FLY_MACHINES_REUSE=1` / `COOK_FLY_MACHINES_REUSE=1` (reuse an existing machine for dev/testing)
+- `COOK_AGENT_DNS_SERVER` (custom DNS server, e.g. `8.8.8.8:53`)
 
 ## Web UI Flow
 
@@ -82,22 +135,22 @@ Current flow:
 2. Form shows:
    - Branch name (required)
    - Link to task (optional dropdown)
-   - **Backend** (dropdown: Local / Docker / Modal)
+   - **Backend** (dropdown: Local / Docker / Modal / Sprites / Fly Machines)
    - **Dotfiles** (optional text field, e.g., `github.com/me/dotfiles`)
 3. On submit:
    - Backend.Setup() called
-   - Progress shown (especially for Docker/Modal which take longer)
+   - Progress shown (especially for Docker/Modal/Sprites/Fly Machines which take longer)
    - Redirect to branch detail page when ready
 
 ### Branch Detail Page
 
 The branch detail page already has terminals, editors, previews. These need to work across backends:
 
-| Feature | Local | Docker | Modal |
-|---------|-------|--------|-------|
-| Terminal tabs | ✅ PTY in checkout | PTY via `docker exec` | PTY via Modal streaming |
-| Editor tabs | ✅ Read/write files | Read/write via docker cp or mount | Read/write via Modal volumes |
-| Preview tabs | ✅ localhost URLs | Container port mapping | Modal tunnel URLs |
+| Feature | Local | Docker | Modal | Sprites | Fly Machines |
+|---------|-------|--------|-------|---------|--------------|
+| Terminal tabs | ✅ PTY in checkout | PTY via `docker exec` | PTY via Modal streaming | PTY via cook-agent proxy | PTY via cook-agent public URL |
+| Editor tabs | ✅ Read/write files | Read/write via docker cp or mount | Read/write via Modal volumes | Read/write via Sprites FS API | Read/write via Fly exec |
+| Preview tabs | ✅ localhost URLs | Container port mapping | Modal tunnel URLs | Sprites proxy URLs | Fly proxy URLs |
 
 ### Backend Status Indicator
 
@@ -107,8 +160,8 @@ Show backend status in sidebar:
 - 🔴 Error (failed to provision)
 - ⚫ Stopped (teardown complete)
 
-For Docker/Modal, show resource info:
-- Container ID / Sandbox ID
+For Docker/Modal/Sprites/Fly Machines, show resource info:
+- Container ID / Sandbox ID / Sprite name / Machine ID
 - CPU/Memory usage (if available)
 - Uptime
 
@@ -325,3 +378,11 @@ type Config struct {
    - Ship with cook binary (embed)?
    - Separate repo (github.com/justinmoon/cook-defaults)?
    - Let user configure in cook.toml?
+
+---
+
+## Spike Reports
+
+### Modal
+
+Tailscale userspace networking spike: `docs/reference/spikes/04_tailscale_modal/`.

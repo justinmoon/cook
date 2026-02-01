@@ -142,7 +142,7 @@ func NewSessionManager() *SessionManager {
 	}
 }
 
-func (m *SessionManager) Create(id, command, workDir string) (*Session, error) {
+func (m *SessionManager) Create(id, command, workDir string, rows, cols int) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -154,7 +154,14 @@ func (m *SessionManager) Create(id, command, workDir string) (*Session, error) {
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
-	ptmx, err := pty.Start(cmd)
+	// Use initial size if provided, otherwise default to 24x80
+	var ws *pty.Winsize
+	if rows > 0 && cols > 0 {
+		ws = &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}
+	} else {
+		ws = &pty.Winsize{Rows: 24, Cols: 80}
+	}
+	ptmx, err := pty.StartWithSize(cmd, ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start pty: %w", err)
 	}
@@ -236,7 +243,7 @@ func handleConnection(conn *websocket.Conn, mgr *SessionManager) {
 
 		switch msg.Type {
 		case MsgCreate:
-			session, err := mgr.Create(msg.SessionID, msg.Command, msg.WorkDir)
+			session, err := mgr.Create(msg.SessionID, msg.Command, msg.WorkDir, msg.Rows, msg.Cols)
 			if err != nil {
 				sendError(conn, err.Error())
 			} else {

@@ -66,7 +66,7 @@ func TestModalBackend_Integration(t *testing.T) {
 	if err := backend.WriteFile(ctx, "/workspace/test.txt", []byte("hello from test")); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
-	
+
 	readBack, err := backend.ReadFile(ctx, "/workspace/test.txt")
 	if err != nil {
 		t.Fatalf("ReadFile after WriteFile failed: %v", err)
@@ -94,7 +94,7 @@ func TestModalBackend_Integration(t *testing.T) {
 
 	// Create a terminal session
 	sessionID := "test-session-1"
-	if err := client.CreateSession(sessionID, "/bin/sh", "/workspace"); err != nil {
+	if err := client.CreateSession(sessionID, "/bin/sh", "/workspace", 24, 80); err != nil {
 		t.Fatalf("Failed to create session: %v", err)
 	}
 	t.Log("Terminal session created successfully!")
@@ -119,6 +119,10 @@ func TestModalBackend_Integration(t *testing.T) {
 	t.Logf("Terminal output received: %d bytes", len(lastOutput))
 	if len(lastOutput) > 0 {
 		t.Logf("Output: %s", string(lastOutput))
+	}
+
+	if cfg, ok := tailnetConfigFromEnv(t); ok {
+		runTailnetUserspace(t, ctx, backend.Exec, "modal", cfg)
 	}
 
 	t.Log("Modal backend test passed!")

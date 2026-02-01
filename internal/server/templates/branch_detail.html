@@ -571,6 +571,18 @@
             padding: 0.25rem 0.75rem;
             font-size: 0.8rem;
         }
+        .provisioning-banner {
+            padding: 0.5rem 0.75rem;
+            margin: 0.5rem 0 1rem 0;
+            background: #2d2d2d;
+            border: 1px solid #3d3d3d;
+            color: #d7ba7d;
+            font-size: 0.85rem;
+            border-radius: 6px;
+        }
+        .provisioning-banner.error {
+            color: #f48771;
+        }
     </style>
 </head>
 <body>
@@ -578,6 +590,13 @@
     <!-- Left sidebar with branch info -->
     <div class="branch-sidebar">
         <h1>{{.Branch.Name}}</h1>
+
+        {{if .Branch.Environment.Provisioning}}
+        <div class="provisioning-banner">Provisioning environment... terminal will connect when ready.</div>
+        {{end}}
+        {{if .Branch.Environment.ProvisioningError}}
+        <div class="provisioning-banner error">Provisioning failed: {{.Branch.Environment.ProvisioningError}}</div>
+        {{end}}
         
         {{if eq .Branch.Status "active"}}
         <div class="action-buttons">
@@ -615,7 +634,7 @@
             <dd class="{{.Branch.Status}}">{{.Branch.Status}}</dd>
             
             <dt>Backend</dt>
-            <dd>{{if .Branch.Environment.Backend}}{{.Branch.Environment.Backend}}{{else}}local{{end}}{{if .Branch.Environment.ContainerID}} <code style="font-size: 0.8em;">({{.Branch.Environment.ContainerID}})</code>{{end}}</dd>
+            <dd>{{if .Branch.Environment.Backend}}{{.Branch.Environment.Backend}}{{else}}local{{end}}{{if .Branch.Environment.ContainerID}} <code style="font-size: 0.8em;">({{.Branch.Environment.ContainerID}})</code>{{end}}{{if .Branch.Environment.SandboxID}} <code style="font-size: 0.8em;">({{.Branch.Environment.SandboxID}})</code>{{end}}{{if .Branch.Environment.SpriteName}} <code style="font-size: 0.8em;">({{.Branch.Environment.SpriteName}})</code>{{end}}{{if .Branch.Environment.MachineID}} <code style="font-size: 0.8em;">({{.Branch.Environment.MachineID}})</code>{{end}}</dd>
             
             {{if .Branch.Environment.Path}}
             <dt>Checkout Path</dt>
@@ -830,7 +849,20 @@ let tabCounter = 0;
         term.open(panelEl);
         
         // Tab object (ws added after connection)
-        const tab = { id, name, tabEl, panelEl, term, fitAddon, ws: null, isAgent };
+        const tab = {
+            id,
+            name,
+            tabEl,
+            panelEl,
+            term,
+            fitAddon,
+            ws: null,
+            isAgent,
+            closed: false,
+            retryDelay: 1000,
+            retryTimer: null,
+            inputBound: false
+        };
         tabs.push(tab);
         
         // Tab click handler
@@ -844,9 +876,19 @@ let tabCounter = 0;
         
         // Connect function - called immediately or when tab is activated
         let connecting = false;
+        function scheduleReconnect() {
+            if (tab.closed || tab.retryTimer) return;
+            updateTabStatus(id, 'connecting');
+            tab.retryTimer = setTimeout(() => {
+                tab.retryTimer = null;
+                connect();
+            }, tab.retryDelay);
+            tab.retryDelay = Math.min(tab.retryDelay * 1.5, 10000);
+        }
         function connect() {
-            if (tab.ws || connecting) return; // Already connected or connecting
+            if (tab.closed || tab.ws || connecting) return; // Already connected or connecting
             connecting = true;
+            updateTabStatus(id, 'connecting');
             
             // Make sure panel is visible
             tab.panelEl.classList.add('active');
@@ -862,7 +904,9 @@ let tabCounter = 0;
                 tab.ws = ws;
                 
                 ws.onopen = () => {
+                    connecting = false;
                     updateTabStatus(id, 'connected');
+                    tab.retryDelay = 1000;
                     fitAddon.fit();
                     ws.send(JSON.stringify({
                         type: 'resize',
@@ -879,19 +923,28 @@ let tabCounter = 0;
                 };
                 
                 ws.onclose = () => {
+                    tab.ws = null;
+                    connecting = false;
                     updateTabStatus(id, 'disconnected');
                     term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
+                    scheduleReconnect();
                 };
                 
                 ws.onerror = () => {
+                    tab.ws = null;
+                    connecting = false;
                     updateTabStatus(id, 'disconnected');
+                    scheduleReconnect();
                 };
                 
-                term.onData((data) => {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        ws.send(data);
-                    }
-                });
+                if (!tab.inputBound) {
+                    tab.inputBound = true;
+                    term.onData((data) => {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(data);
+                        }
+                    });
+                }
             }, 50);
         }
         
@@ -1377,6 +1430,11 @@ let tabCounter = 0;
         }
         
         // Clean up terminal resources if present
+        tab.closed = true;
+        if (tab.retryTimer) {
+            clearTimeout(tab.retryTimer);
+            tab.retryTimer = null;
+        }
         if (tab.ws) tab.ws.close();
         if (tab.term) tab.term.dispose();
         if (tab.dispose) tab.dispose();

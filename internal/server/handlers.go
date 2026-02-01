@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/justinmoon/cook/internal/agent"
@@ -830,6 +832,7 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid backend type", http.StatusBadRequest)
 		return
 	}
+	asyncProvisioning := backendType == "modal" || backendType == "sprites" || backendType == "fly-machines"
 
 	// Get the repo
 	repoStore := repo.NewStore(s.cfg.Server.DataDir)
@@ -877,36 +880,26 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-	case "modal":
+	case "modal", "sprites", "fly-machines":
 		repoURL, err := s.repoCloneURL(owner, repoName)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := branchStore.CreateWithModalCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
+		if err := branchStore.CreateProvisioningRemoteBranch(b, rp.Path, backendType, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-	case "sprites":
-		repoURL, err := s.repoCloneURL(owner, repoName)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := branchStore.CreateWithSpritesCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	case "fly-machines":
-		repoURL, err := s.repoCloneURL(owner, repoName)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := branchStore.CreateWithFlyMachinesCheckout(b, rp.Path, repoURL, dotfiles); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+		branchCopy := *b
+		bareRepoPath := rp.Path
+		taskMdContent := fmt.Sprintf("# %s\n\n%s\n", t.Title, t.Body)
+		go func(branchCopy branch.Branch, repoURL, taskMdContent string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+			if err := branchStore.ProvisionRemoteBranch(ctx, &branchCopy, bareRepoPath, repoURL, taskMdContent); err != nil {
+				log.Printf("Provisioning failed for %s/%s: %v", branchCopy.Repo, branchCopy.Name, err)
+			}
+		}(branchCopy, repoURL, taskMdContent)
 	default:
 		if err := branchStore.CreateWithCheckout(b, rp.Path, dotfiles); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -917,22 +910,22 @@ func (s *Server) handleTaskStartBranch(w http.ResponseWriter, r *http.Request) {
 	// Write TASK.md with task description
 	taskMdContent := fmt.Sprintf("# %s\n\n%s\n", t.Title, t.Body)
 	taskMdPath := filepath.Join(b.Environment.Path, "TASK.md")
-	if backendType == "modal" || backendType == "docker" || backendType == "sprites" || backendType == "fly-machines" {
-		// For remote backends, write via the backend
-		backend, err := b.Backend()
-		if err != nil {
-			http.Error(w, "Failed to get backend: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := backend.WriteFile(r.Context(), taskMdPath, []byte(taskMdContent)); err != nil {
-			http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// For local backend, write directly
-		if err := os.WriteFile(taskMdPath, []byte(taskMdContent), 0644); err != nil {
-			http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
-			return
+	if !asyncProvisioning {
+		if backendType == "docker" {
+			backend, err := b.Backend()
+			if err != nil {
+				http.Error(w, "Failed to get backend: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := backend.WriteFile(r.Context(), taskMdPath, []byte(taskMdContent)); err != nil {
+				http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			if err := os.WriteFile(taskMdPath, []byte(taskMdContent), 0644); err != nil {
+				http.Error(w, "Failed to write TASK.md: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 

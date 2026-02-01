@@ -50,7 +50,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	repoName := chi.URLParam(r, "repo")
 	branchName := chi.URLParam(r, "name")
 	repoRef := owner + "/" + repoName
-	
+
 	// Support multiple terminal tabs via ?tab=xxx query param
 	// No tab param = agent session, with tab param = separate shell session
 	tabID := r.URL.Query().Get("tab")
@@ -59,7 +59,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		sessionKey = sessionKey + "/" + tabID
 	}
 	isAgentSession := tabID == ""
-	
+
 	// Parse initial terminal size from URL (so PTY is created at correct size)
 	var initialRows, initialCols uint16
 	if rows := r.URL.Query().Get("rows"); rows != "" {
@@ -96,8 +96,8 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For Docker and Modal backends, use cook-agent protocol
-	if b.Environment.Backend == "docker" || b.Environment.Backend == "modal" {
+	// For Docker, Modal, Sprites, and Fly Machines backends, use cook-agent protocol
+	if b.Environment.Backend == "docker" || b.Environment.Backend == "modal" || b.Environment.Backend == "sprites" || b.Environment.Backend == "fly-machines" {
 		s.handleRemoteTerminalWS(w, r, b, sessionKey, isAgentSession, initialRows, initialCols)
 		return
 	}
@@ -236,6 +236,10 @@ func (s *Server) handleRemoteTerminalWS(w http.ResponseWriter, r *http.Request, 
 	// Get the backend to find agent address
 	backend, err := b.Backend()
 	if err != nil {
+		if errors.Is(err, branch.ErrProvisioning) {
+			http.Error(w, "Branch provisioning in progress", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "Failed to get backend: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -246,6 +250,10 @@ func (s *Server) handleRemoteTerminalWS(w http.ResponseWriter, r *http.Request, 
 	case *env.DockerBackend:
 		agentAddr = be.AgentAddr()
 	case *env.ModalBackend:
+		agentAddr = be.AgentAddr()
+	case *env.SpritesBackend:
+		agentAddr = be.AgentAddr()
+	case *env.FlyMachinesBackend:
 		agentAddr = be.AgentAddr()
 	default:
 		http.Error(w, "Backend does not support cook-agent", http.StatusBadRequest)
@@ -299,8 +307,8 @@ func (s *Server) handleRemoteTerminalWS(w http.ResponseWriter, r *http.Request, 
 	err = agentClient.AttachSession(sessionID)
 	if err != nil {
 		// Session doesn't exist, create it
-		log.Printf("Creating new agent session %s: %s", sessionID, command)
-		err = agentClient.CreateSession(sessionID, command, "/workspace")
+		log.Printf("Creating new agent session %s: %s (size: %dx%d)", sessionID, command, initialCols, initialRows)
+		err = agentClient.CreateSession(sessionID, command, "/workspace", int(initialRows), int(initialCols))
 		if err != nil {
 			log.Printf("Failed to create agent session: %v", err)
 			http.Error(w, "Failed to create session in container", http.StatusInternalServerError)

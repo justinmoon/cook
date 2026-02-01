@@ -28,6 +28,11 @@ func timeoutMiddleware(timeout time.Duration) func(next http.Handler) http.Handl
 				next.ServeHTTP(w, r)
 				return
 			}
+			// Longer timeout for branch start (remote backends can take minutes).
+			if strings.HasSuffix(path, "/start") {
+				middleware.Timeout(10 * time.Minute)(next).ServeHTTP(w, r)
+				return
+			}
 			// Apply timeout to all other routes
 			middleware.Timeout(timeout)(next).ServeHTTP(w, r)
 		})
@@ -91,6 +96,9 @@ func (s *Server) setupRoutes() {
 	s.router.Get("/logout", s.handleLogout)
 	s.router.Get("/auth/challenge", s.handleAuthChallenge)
 	s.router.Post("/auth/verify", s.handleAuthVerify)
+
+	// Git HTTP backend (for remote sandboxes)
+	s.router.Handle("/git/*", http.HandlerFunc(s.handleGitHTTP))
 
 	// HTML pages
 	s.router.Get("/", s.handleIndex)

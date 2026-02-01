@@ -13,7 +13,29 @@
   outputs = { self, nixpkgs, flake-utils, playwright }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
+
+        # Sprites CLI from Fly.io
+        sprites-cli = pkgs.stdenv.mkDerivation rec {
+          pname = "sprites";
+          version = "dev-latest";
+          src = pkgs.fetchurl {
+            url = let
+              arch = if pkgs.stdenv.hostPlatform.isAarch64 then "arm64" else "amd64";
+              os = if pkgs.stdenv.isDarwin then "darwin" else "linux";
+            in "https://sprites-binaries.t3.storage.dev/client/${version}/sprite-${os}-${arch}.tar.gz";
+            sha256 = "sha256-wKP7AM/JsWANRvYXFWEDFF1SwIBOs6u+dBR56Qlhr4k=";
+          };
+          sourceRoot = ".";
+          installPhase = ''
+            mkdir -p $out/bin
+            cp sprite $out/bin/sprites
+            chmod +x $out/bin/sprites
+          '';
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -42,6 +64,9 @@
             bun
             playwright.packages.${system}.playwright-test
             playwright.packages.${system}.playwright-driver
+
+            # Sprites CLI
+            sprites-cli
           ];
 
           shellHook = ''
@@ -64,8 +89,16 @@
 
         # Sandbox image for Modal/Docker (must be built on x86_64-linux)
         packages.sandbox-image = import ./nix/sandbox-image.nix {
-          pkgs = import nixpkgs { 
-            system = "x86_64-linux"; 
+          pkgs = import nixpkgs {
+            system = "x86_64-linux";
+            config.allowUnfree = true;
+          };
+        };
+
+        # Sandbox tarball root for Sprites (must be built on x86_64-linux)
+        packages.sandbox-tarball = import ./nix/sandbox-tarball.nix {
+          pkgs = import nixpkgs {
+            system = "x86_64-linux";
             config.allowUnfree = true;
           };
         };

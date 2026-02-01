@@ -82,6 +82,9 @@ type Config struct {
 	// Dotfiles is an optional git URL for dotfiles repo
 	Dotfiles string
 
+	// SandboxName overrides the backend resource name (sprite/machine/sandbox)
+	SandboxName string
+
 	// Secrets contains agent auth, API keys, etc.
 	Secrets map[string]string
 }
@@ -101,7 +104,9 @@ type PTYAttacher interface {
 type Type string
 
 const (
-	TypeLocal  Type = "local"
-	TypeDocker Type = "docker"
-	TypeModal  Type = "modal"
+	TypeLocal       Type = "local"
+	TypeDocker      Type = "docker"
+	TypeModal       Type = "modal"
+	TypeSprites     Type = "sprites"
+	TypeFlyMachines Type = "fly-machines"
 )

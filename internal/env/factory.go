@@ -11,6 +11,10 @@ func NewBackend(backendType Type, cfg Config) (Backend, error) {
 		return NewDockerBackend(cfg)
 	case TypeModal:
 		return NewModalBackend(cfg)
+	case TypeSprites:
+		return NewSpritesBackend(cfg)
+	case TypeFlyMachines:
+		return NewFlyMachinesBackend(cfg)
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", backendType)
 	}
@@ -28,6 +32,12 @@ func NewBackendFromPath(backendType Type, workDir string) (Backend, error) {
 	case TypeModal:
 		// For Modal, we need the sandbox ID to reconnect
 		return nil, fmt.Errorf("modal backend requires sandbox ID for existing environments")
+	case TypeSprites:
+		// For Sprites, we need the sprite name to reconnect
+		return nil, fmt.Errorf("sprites backend requires sprite name for existing environments")
+	case TypeFlyMachines:
+		// For Fly Machines, we need the machine ID to reconnect
+		return nil, fmt.Errorf("fly machines backend requires machine ID for existing environments")
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", backendType)
 	}

@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	defaultDockerImage = "cook-env:latest"
+	nixSandboxImage    = "ghcr.io/justinmoon/cook-sandbox:latest"
+	defaultDockerImage = nixSandboxImage
 	containerPrefix    = "cook-"
 	agentPort          = 7422
 )
@@ -110,7 +111,7 @@ func (b *DockerBackend) Setup(ctx context.Context) error {
 	return nil
 }
 
-// prepareImage ensures the Docker image exists (builds from Dockerfile if needed)
+// prepareImage ensures the Docker image exists (builds from nix if needed)
 func (b *DockerBackend) prepareImage(ctx context.Context) error {
 	// Check if image already exists
 	_, _, err := b.client.ImageInspectWithRaw(ctx, b.imageName)
@@ -119,47 +120,74 @@ func (b *DockerBackend) prepareImage(ctx context.Context) error {
 		return nil
 	}
 
-	// Image doesn't exist, try to build it from Dockerfile.env
-	fmt.Printf("Building Docker image: %s\n", b.imageName)
+	// Image doesn't exist, build it from nix sandbox image
+	fmt.Printf("Building Docker image from nix: %s\n", b.imageName)
 	return b.buildDefaultImage(ctx)
 }
 
 func (b *DockerBackend) buildDefaultImage(ctx context.Context) error {
-	// Find Dockerfile.env - look relative to the cook binary
-	dockerfilePath, err := findDockerfile()
-	if err != nil {
-		return fmt.Errorf("Dockerfile.env not found: %w", err)
+	if _, err := exec.LookPath("nix"); err != nil {
+		return fmt.Errorf("nix not found; install nix or pre-load the image %s", b.imageName)
 	}
 
-	// Build the image using docker CLI
-	cmd := exec.CommandContext(ctx, "docker", "build", "-t", b.imageName, "-f", dockerfilePath, filepath.Dir(dockerfilePath))
-	cmd.Stdout = os.Stdout
+	var out bytes.Buffer
+	flakeDir, err := findFlakeDir()
+	if err != nil {
+		return err
+	}
+
+	flakeRef := fmt.Sprintf("%s#sandbox-image", flakeDir)
+	cmd := exec.CommandContext(ctx, "nix", "build", flakeRef, "--no-link", "--print-out-paths")
+	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker build failed: %w", err)
+		return fmt.Errorf("nix build failed: %w", err)
+	}
+
+	imagePath := strings.TrimSpace(out.String())
+	if imagePath == "" {
+		return fmt.Errorf("nix build returned empty output")
+	}
+
+	loadCmd := exec.CommandContext(ctx, "docker", "load", "--input", imagePath)
+	loadCmd.Stdout = os.Stdout
+	loadCmd.Stderr = os.Stderr
+	if err := loadCmd.Run(); err != nil {
+		return fmt.Errorf("docker load failed: %w", err)
+	}
+
+	if b.imageName != nixSandboxImage {
+		tagCmd := exec.CommandContext(ctx, "docker", "tag", nixSandboxImage, b.imageName)
+		tagCmd.Stdout = os.Stdout
+		tagCmd.Stderr = os.Stderr
+		if err := tagCmd.Run(); err != nil {
+			return fmt.Errorf("docker tag failed: %w", err)
+		}
 	}
 
 	return nil
 }
 
-func findDockerfile() (string, error) {
-	// Try common locations
-	candidates := []string{
-		"Dockerfile.env",
-		"./Dockerfile.env",
-		filepath.Join(filepath.Dir(os.Args[0]), "Dockerfile.env"),
+func findFlakeDir() (string, error) {
+	start, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working dir: %w", err)
 	}
 
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
-			return filepath.Abs(path)
+	dir := start
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "flake.nix")); err == nil {
+			return dir, nil
 		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
 
-	return "", fmt.Errorf("Dockerfile.env not found")
+	return "", fmt.Errorf("flake.nix not found; run from the repo root or pre-load the image %s", nixSandboxImage)
 }
-
-
 
 func (b *DockerBackend) cloneRepo(ctx context.Context) error {
 	// Clone to host directory (will be bind-mounted into container)
@@ -210,8 +238,6 @@ func (b *DockerBackend) createContainer(ctx context.Context) error {
 			Target: b.workDir,
 		},
 	}
-
-
 
 	// Create new container with host network for easy port access
 	resp, err := b.client.ContainerCreate(ctx, &container.Config{
@@ -319,7 +345,7 @@ func (b *DockerBackend) copyClaudeAuth(ctx context.Context) error {
 	}
 
 	// Create .claude directory in container
-	if _, err := b.Exec(ctx, "mkdir -p /home/dev/.claude"); err != nil {
+	if _, err := b.Exec(ctx, "mkdir -p /root/.claude"); err != nil {
 		return fmt.Errorf("failed to create .claude dir: %w", err)
 	}
 
@@ -357,9 +383,9 @@ func (b *DockerBackend) copyClaudeAuth(ctx context.Context) error {
 			return fmt.Errorf("docker cp: %s: %w", string(output), err)
 		}
 
-		// Move to final location as root and fix ownership
-		mvCmd := fmt.Sprintf("cp %s %s && chown dev:dev %s && chmod 600 %s && rm %s", tmpDst, dst, dst, dst, tmpDst)
-		if _, err := b.ExecAsRoot(ctx, mvCmd); err != nil {
+		// Move to final location as root and fix permissions
+		mvCmd := fmt.Sprintf("cp %s %s && chmod 600 %s && rm %s", tmpDst, dst, dst, tmpDst)
+		if _, err := b.Exec(ctx, mvCmd); err != nil {
 			return fmt.Errorf("move file: %w", err)
 		}
 
@@ -379,7 +405,7 @@ func (b *DockerBackend) copyClaudeAuth(ctx context.Context) error {
 
 	// Copy ~/.claude.json (contains oauthAccount)
 	claudeJsonPath := filepath.Join(homeDir, ".claude.json")
-	if err := copyFile(claudeJsonPath, "/home/dev/.claude.json"); err != nil {
+	if err := copyFile(claudeJsonPath, "/root/.claude.json"); err != nil {
 		fmt.Printf("Note: ~/.claude.json not copied: %v\n", err)
 	}
 
@@ -388,10 +414,10 @@ func (b *DockerBackend) copyClaudeAuth(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "security", "find-generic-password", "-s", "Claude Code-credentials", "-w")
 	if keychainData, err := cmd.Output(); err == nil && len(keychainData) > 0 {
 		// Write credentials to container
-		credPath := "/home/dev/.claude/.credentials.json"
+		credPath := "/root/.claude/.credentials.json"
 		escaped := strings.ReplaceAll(string(keychainData), "'", "'\"'\"'")
-		if _, err := b.ExecAsRoot(ctx, fmt.Sprintf("echo '%s' > %s && chown dev:dev %s && chmod 600 %s", 
-			strings.TrimSpace(escaped), credPath, credPath, credPath)); err != nil {
+		if _, err := b.Exec(ctx, fmt.Sprintf("echo '%s' > %s && chmod 600 %s",
+			strings.TrimSpace(escaped), credPath, credPath)); err != nil {
 			fmt.Printf("Warning: failed to copy keychain credentials: %v\n", err)
 		}
 	}
@@ -401,21 +427,18 @@ func (b *DockerBackend) copyClaudeAuth(ctx context.Context) error {
 	authFiles := []string{".credentials.json", "settings.json", "settings.local.json"}
 	for _, filename := range authFiles {
 		srcPath := filepath.Join(claudeDir, filename)
-		dstPath := "/home/dev/.claude/" + filename
+		dstPath := "/root/.claude/" + filename
 		if err := copyFile(srcPath, dstPath); err != nil {
 			// Not an error - file might not exist
 			continue
 		}
 	}
 
-	// Fix ownership
-	b.Exec(ctx, "chown -R dev:dev /home/dev/.claude /home/dev/.claude.json 2>/dev/null")
-
 	return nil
 }
 
 func (b *DockerBackend) setupDotfiles(ctx context.Context) error {
-	dotfilesDir := "/home/dev/.dotfiles"
+	dotfilesDir := "/root/.dotfiles"
 
 	// Clone dotfiles repo inside container
 	_, err := b.Exec(ctx, fmt.Sprintf("git clone %s %s", b.config.Dotfiles, dotfilesDir))
