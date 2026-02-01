@@ -692,6 +692,7 @@
             <!-- Tabs will be added here dynamically -->
             <button class="tab-add" id="addTabBtn" title="New Terminal">+</button>
             <button class="tab-add" id="addPreviewBtn" title="New Preview">&#x1F310;</button>
+            <button class="tab-add" id="addWebUIBtn" title="New WebUI">UI</button>
             <button class="tab-add" id="addEditorBtn" title="New Editor">&lt;/&gt;</button>
         </div>
         <div class="panel-container" id="panelContainer">
@@ -714,6 +715,7 @@ let tabCounter = 0;
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsBaseUrl = `${wsProtocol}//${window.location.host}/ws/terminal/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}`;
     const lspWsBaseUrl = `${wsProtocol}//${window.location.host}/ws/lsp/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}`;
+    const branchBaseUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}`;
     const apiBaseUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/tabs`;
     const previewApiUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/previews`;
     const editorApiUrl = `/branches/{{.Owner}}/{{.Repo}}/{{.Branch.Name}}/editors`;
@@ -724,6 +726,7 @@ let tabCounter = 0;
     const tabBar = document.getElementById('tabBar');
     const addTabBtn = document.getElementById('addTabBtn');
     const addPreviewBtn = document.getElementById('addPreviewBtn');
+    const addWebUIBtn = document.getElementById('addWebUIBtn');
     const addEditorBtn = document.getElementById('addEditorBtn');
     const panelContainer = document.getElementById('panelContainer');
     
@@ -1041,7 +1044,12 @@ let tabCounter = 0;
         
         function navigate(url) {
             if (!url) return;
-            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = url.trim();
+            if (!url) return;
+            const isRelative = url.startsWith('/') || url.startsWith('./') || url.startsWith('../');
+            const isProtocolRelative = url.startsWith('//');
+            const hasHttpScheme = url.startsWith('http://') || url.startsWith('https://');
+            if (!isRelative && !hasHttpScheme && !isProtocolRelative) {
                 url = 'http://' + url;
             }
             urlInput.value = url;
@@ -1123,6 +1131,18 @@ let tabCounter = 0;
         return tab;
     }
     window.createPreviewTab = createPreviewTab;
+
+    addWebUIBtn.addEventListener('click', () => {
+        const portStr = prompt('Port to open (1-65535):', '3000');
+        if (!portStr) return;
+        const port = parseInt(portStr.trim(), 10);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            alert('Invalid port. Must be 1-65535.');
+            return;
+        }
+        const tab = createPreviewTab(`WebUI:${port}`);
+        tab.navigate(`${branchBaseUrl}/ports/${port}/`);
+    });
 
     let editorBundlePromise = null;
     function loadEditorBundle() {
